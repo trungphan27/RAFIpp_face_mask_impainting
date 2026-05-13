@@ -1,0 +1,2969 @@
+\documentclass{ipgpmaster}
+%
+% Pour saisir directement les lettres accentuées :
+% \usepackage[applemac]{inputenc} % pour utilisateurs mac
+% \usepackage[ansinew]{inputenc}  % pour Windows ANSI
+% \usepackage[latin1]{inputenc}   % pour Unix Latin1
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{float}
+
+\begin{document}
+
+\checkyears
+
+\vspace*{5mm}
+
+%\setkeys{Gin}{draft} % images non affichées
+\setkeys{Gin}{draft=false} % images affichées
+
+%\linenumbers % Numerotation des lignes pour relecture
+%Select here the language 
+% \selectlanguage{french}   
+\selectlanguage{english} 
+
+
+\def\author{Phan Dinh Trung - 20230093}
+%\footnote{
+%Albert Tarantola (1949-2009) : Géophysicien français d'origine espagnole, dont les travaux %ont notamment porté sur la théorie du problème
+%inverse. Il a effectué sa carrière à l'IPGP, étant notamment responsable du DEA (diplôme %d'études approfondies, l'ancêtre du master 2) de géophysique interne entre
+%1991 et 1996. En tant que responsable du DEA, il a encouragé l'utilisation de \LaTeX\ pour %la rédaction des rapports de stage, et rédigé les recommandations reprises dans ce document.
+%}}
+\def\title{Applying Deep Learning methods \\
+to reconstruct human face under mask}
+\def\shorttitle{Reconstructing face under mask}
+\def\unit{\textit{
+Hanoi University of Science and Technology - SOICT}}
+\def\course{\textit{Project II}}
+\def\spe{} % Parcours
+\def\supervisor{\textit{Prof. Dr. Huynh Quyet Thang}}
+\def\mydate{\today}
+% \def\keywords{Sciences de la Terre,  master, rapport, conseils}
+
+\Entete
+
+\vspace*{2cm}
+\begin{abstract}
+Face reconstruction under mask occlusion has become an increasingly important task in computer vision, driven by the widespread use of facial masks in recent years. Given the challenge of restoring realistic and coherent facial details from partially occluded images, this study presents a comprehensive comparative analysis of five generative approaches. Within the \textbf{GAN framework using convolutional networks and PatchGAN discriminator}, we explore three Generator variants: (1) \textit{Double Convolutional Block Generator}, which reconstructs masked regions through stacked convolutional blocks with hierarchical feature extraction; (2) \textit{Partial Convolution Generator}, which leverages a U-Net backbone with partial convolutions that propagate information exclusively from unmasked regions via binary mask-guided skip connections; and (3) \textit{Facial Landmarks Prior Generator}, which integrates facial landmark detection to enable deeper structural analysis and maintain anatomical consistency. Additionally, we investigate a \textbf{GAN with Transformer} approach that incorporates self-attention mechanisms for capturing long-range spatial dependencies, and a \textbf{Diffusion Model} that performs iterative denoising in latent space for high-resolution reconstruction. Experiments are conducted on the CelebA-HQ 256 dataset with synthetic mask occlusions, evaluated using SSIM, PSNR, and FID metrics. Our study provides insights into the trade-offs between reconstruction fidelity, computational cost, and generalization across these paradigms.
+\end{abstract}
+
+% \vfill
+
+% \rule{\linewidth}{0.4pt}\\[3mm]
+% \textit{
+% Albert Tarantola (1949-2009) : Géophysicien français d'origine espagnole, dont les travaux ont notamment porté sur la théorie du problème
+% inverse. Il a effectué sa carrière à l'IPGP, étant notamment responsable du DEA (diplôme d'études approfondies, l'ancêtre du master 2) de géophysique interne entre
+% 1991 et 1996. En tant que responsable du DEA, il a encouragé l'utilisation de \LaTeX\ pour la rédaction des
+% rapports de stage, et rédigé des recommandations reprises dans ce document.
+% }
+
+
+\newpage
+\tableofcontents
+\newpage
+\section{Introduction}
+
+\subsection{Motivation}
+
+The widespread adoption of facial masks during and after the COVID-19 pandemic has introduced significant challenges for computer vision systems that rely on complete facial information. Applications such as facial recognition, emotion detection, identity verification, and human-computer interaction have experienced substantial performance degradation when confronted with occluded facial regions. This degradation stems from the fundamental reliance of these systems on holistic facial features, particularly those in the lower face region including the mouth, nose, and chin, which carry critical information for identity discrimination and expression recognition.
+
+Face reconstruction under mask occlusion represents a compelling research problem that sits at the intersection of image inpainting, facial analysis, and generative modeling. Unlike general image inpainting tasks where missing regions may contain arbitrary content, facial reconstruction demands adherence to strict anatomical constraints, identity preservation, and natural appearance that seamlessly blends with visible facial features. The reconstructed lower face must maintain consistency with the upper face in terms of skin tone, lighting conditions, facial structure, and identity-specific characteristics.
+
+The motivation for this work extends beyond mere academic interest. Practical applications include enhancing legacy facial recognition systems to handle masked inputs, enabling retrospective analysis of masked surveillance footage, improving virtual try-on experiences for cosmetic products, and supporting accessibility features for individuals who rely on lip-reading or facial expression interpretation. Furthermore, the techniques developed for masked face reconstruction contribute to the broader understanding of generative models and their capacity to synthesize realistic, semantically meaningful content under challenging constraints.
+
+\subsection{Defining the Problem}
+
+The face reconstruction under mask problem can be formally defined as follows. Given an input image $\mathbf{x} \in \mathbb{R}^{C \times H \times W}$ containing a human face with a mask occlusion covering the lower facial region, and a binary mask $\mathbf{m} \in \{0, 1\}^{H \times W}$ indicating the occluded pixels (where $m_{ij} = 1$ denotes occluded regions and $m_{ij} = 0$ denotes visible regions), the objective is to learn a mapping function $G: \mathbb{R}^{C \times H \times W} \times \{0, 1\}^{H \times W} \rightarrow \mathbb{R}^{C \times H \times W}$ that produces a reconstructed image $\hat{\mathbf{y}} = G(\mathbf{x}, \mathbf{m})$ such that:
+
+\begin{equation}
+\hat{\mathbf{y}} \approx \mathbf{y}, \quad \text{where } \mathbf{y} \text{ is the ground truth unmasked face}
+\label{eq:problem_definition}
+\end{equation}
+
+The reconstruction quality is evaluated based on multiple criteria. First, pixel-wise accuracy measures how closely the reconstructed pixels match the ground truth values in terms of color and intensity. Structural similarity assesses whether the reconstructed image preserves the structural patterns, textures, and edges present in the original face. Then, perceptual quality evaluates whether the reconstruction appears visually realistic and natural to human observers. And finally, identity preservation ensures that the reconstructed face maintains the identity characteristics of the original individual, enabling subsequent recognition tasks.
+
+The key challenges in this problem include: (1) the inherent ill-posed nature of the task, as multiple plausible face completions may exist for a given masked input; (2) the need to generate fine-grained details such as lips, teeth, and facial hair that are anatomically plausible; (3) maintaining consistency between the synthesized lower face and the visible upper face in terms of pose, expression, and lighting; and (4) generalizing across diverse facial appearances, ethnicities, ages, and genders represented in real-world scenarios.
+
+\subsection{Pipeline Overview}
+
+To comprehensively investigate the face reconstruction under mask problem, this study implements and compares five distinct generative approaches, organized into three main frameworks. The pipeline encompasses data preprocessing, model training, and systematic evaluation, with each approach offering unique architectural innovations and learning strategies. Figure~\ref{fig:pipeline_overview} illustrates the overall experimental pipeline.
+
+%% ============================================
+%% FRAMEWORK 1: GAN with PatchGAN Discriminator
+%% ============================================
+\subsubsection{GAN Framework with Convolutional Networks and PatchGAN Discriminator}
+
+The first framework utilizes classical Generative Adversarial Networks with convolutional architectures for the Generator and a PatchGAN discriminator~\cite{pix2pix2017} for adversarial training. The PatchGAN discriminator classifies overlapping image patches as real or fake, encouraging local texture quality throughout the reconstructed image. Within this framework, we explore three distinct Generator architectures:
+
+\paragraph{Double Convolutional Block Generator}
+The first variant employs a Generator constructed from stacked double convolutional blocks. Each block consists of two consecutive convolutional layers, each followed by batch normalization and ReLU activation. This architecture follows an encoder-decoder structure where the encoder progressively downsamples the input through max pooling operations, extracting hierarchical features at multiple scales. The decoder then upsamples these features through transposed convolutions, with skip connections transferring high-resolution features from corresponding encoder layers. The double convolution design enhances feature extraction capability by allowing deeper local feature learning within each resolution level, enabling the network to capture both fine-grained textures and broader structural patterns necessary for realistic face reconstruction.
+
+\paragraph{Partial Convolution Generator}
+The second variant employs Partial Convolutions within a U-Net backbone~\cite{unet2015}, specifically designed for irregular hole inpainting tasks. Unlike standard convolutions that treat all input pixels equally, partial convolutions normalize the convolution output based on the ratio of valid (unmasked) pixels within the receptive field. Mathematically, for a convolution window, the output is scaled by the ratio of the mask sum to the total window size, ensuring that only information from visible regions contributes to feature computation. The binary mask is propagated through the network via skip connections, progressively updating as the valid region expands through successive layers. This mask-aware convolution mechanism ensures that feature extraction and reconstruction are conditioned exclusively on legitimate pixel values, preventing the bleeding of invalid information from masked regions into the generated content. The approach is particularly effective for maintaining sharp boundaries between reconstructed and original regions.
+
+\paragraph{Multi-Priors Based Lightweight Generator}
+The third variant, Multi-Priors Based Lightweight GAN, incorporates multiple facial priors to guide the generator in preserving anatomical structure and identity consistency. The core innovation lies in constructing a multi-channel prior map consisting of: a landmark heatmap generated from facial keypoints detected by dlib, an edge map connecting landmark contours via polylines with Gaussian smoothing, and segmentation channels distinguishing face and mask regions. These priors are concatenated with the masked input image to form a multi-channel tensor. The Generator adopts a lightweight U-Net encoder-decoder structure with separable convolutions for parameter efficiency. The training objective combines adversarial loss, L1 reconstruction loss, perceptual loss, and mask-weighted L1 loss to balance realism, accuracy, and focus on occluded regions.
+
+%% ============================================
+%% FRAMEWORK 2: GAN with Transformer
+%% ============================================
+\subsubsection{GAN Framework with Transformer}
+
+The second framework integrates transformer-based attention mechanisms into the GAN architecture. Unlike conventional convolutional generators that have limited receptive fields determined by kernel sizes and network depth, this approach leverages self-attention operations to model long-range spatial dependencies directly. The transformer layers compute attention weights between all spatial positions, allowing the generator to attend to distant facial features when reconstructing occluded regions. For instance, when reconstructing the mouth area, the model can directly attend to eye and forehead features to infer identity-consistent completions. This global context modeling is particularly suited for face reconstruction, as facial features exhibit strong correlations across different regions. The architecture combines the local feature extraction capability of convolutions with the global reasoning ability of transformers, producing more coherent and semantically meaningful reconstructions compared to purely convolutional approaches.
+
+%% ============================================
+%% FRAMEWORK 3: Diffusion Model
+%% ============================================
+\subsubsection{Diffusion Model}
+
+The third framework leverages recent advances in diffusion-based generative models for face reconstruction. This approach implements an iterative denoising process that gradually transforms random noise into coherent facial completions. The diffusion model operates in a compressed latent space, where input images are first encoded using a pretrained autoencoder. Starting from a noisy latent representation, the model learns to predict and remove noise at each timestep, conditioned on both the encoded visible facial regions and the spatial mask indicating the occluded area. This conditioning mechanism guides the denoising trajectory to generate latent representations that, when decoded, seamlessly blend with the original visible regions. The latent space formulation significantly reduces computational requirements compared to pixel-space diffusion while maintaining high-quality generation capabilities. The iterative refinement nature of diffusion models often produces more diverse and photorealistic outputs compared to single-pass GAN-based methods, as the gradual denoising allows for progressive detail enhancement at each step.
+
+%% ============================================
+%% EVALUATION
+%% ============================================
+\vspace{0.5cm}
+
+Each of these five approaches is trained on the CelebA-HQ 256 dataset with synthetic mask occlusions covering the mouth and nose regions. All models are evaluated using consistent metrics including Structural Similarity Index (SSIM)~\cite{ssim2004} for perceptual quality, Peak Signal-to-Noise Ratio (PSNR)~\cite{psnr2010} for pixel-wise reconstruction accuracy, and Fréchet Inception Distance (FID)~\cite{fid2017} for distribution-level realism. The comparative analysis aims to elucidate the trade-offs between reconstruction fidelity, computational efficiency, training stability, and generalization capability across these diverse generative paradigms.
+
+
+% =============================================================================
+% Model Architecture and Training Section - ImprovedPremiumGAN
+% Face Reconstruction Under Mask
+% =============================================================================
+\section{Data Preprocessing}
+\subsection{Exploratory Data Analysis}
+
+This section presents a comprehensive exploratory data analysis (EDA) of the CelebA-HQ 256 dataset, which serves as the foundation for our face reconstruction experiments. The dataset is divided into two distinct categories: images with synthetic mask occlusions (\texttt{with\_mask}) and original unoccluded facial images (\texttt{without\_mask}). Through systematic analysis of image properties, color distributions, brightness characteristics, and texture metrics, we aim to gain deeper insights into the data characteristics that influence the performance of generative models in face reconstruction tasks.
+
+\subsubsection{Image Properties Analysis}
+
+The fundamental properties of images in the dataset were analyzed to ensure consistency and identify potential preprocessing requirements. As illustrated in Figure~\ref{fig:image_properties}, all images in both the \texttt{with\_mask} and \texttt{without\_mask} categories maintain a uniform resolution of $256 \times 256$ pixels, resulting in a consistent aspect ratio of 1.0 across the entire dataset. This uniformity eliminates the need for resizing operations during training and ensures that the generative models receive inputs of consistent dimensions. Furthermore, all images are stored in 3-channel RGB format with 8-bit depth per channel, providing a standardized pixel value range of $[0, 255]$ for network input normalization. The homogeneity of these properties across both categories confirms that any observed differences in model performance can be attributed to the content variations introduced by mask occlusions rather than inconsistencies in image specifications.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{EDA_result/01_image_properties.png}
+    \caption{Distribution of image properties including width, height, and aspect ratio for both \texttt{with\_mask} and \texttt{without\_mask} categories. The summary table confirms uniform image specifications across the dataset.}
+    \label{fig:image_properties}
+\end{figure}
+
+\subsubsection{RGB Channel Distribution}
+
+The pixel-level color distribution analysis provides critical insights into the chromatic characteristics of facial images. Figure~\ref{fig:rgb_histograms} presents the histograms of Red, Green, and Blue channel values for both image categories. The \texttt{without\_mask} images exhibit smooth, approximately Gaussian distributions across all three channels, with the Red channel showing a slightly higher mean value, which is characteristic of human skin tones. In contrast, the \texttt{with\_mask} images demonstrate a notable perturbation in the lower pixel value regions, particularly evident in the increased frequency of near-zero values across all channels. This shift is directly attributable to the black mask regions occluding the lower facial area, which introduce a significant population of zero-valued pixels. The bimodal tendency observed in the masked image distributions suggests that generative models must learn to distinguish between valid facial regions and artificially occluded areas, making the reconstruction task inherently more challenging.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.98\textwidth]{EDA_result/02_rgb_histograms.png}
+    \caption{RGB channel histogram distributions comparing \texttt{with\_mask} (top row) and \texttt{without\_mask} (bottom row) image categories. The masked images show increased low-value pixel frequencies due to black mask regions.}
+    \label{fig:rgb_histograms}
+\end{figure}
+
+\subsubsection{Pixel Statistics Summary}
+
+A quantitative summary of pixel statistics across both image categories is presented in Figure~\ref{fig:pixel_statistics}. The mean pixel values for the \texttt{without\_mask} category are approximately $R=159.42$, $G=120.85$, and $B=108.67$, reflecting the warm skin tones predominant in facial imagery. The \texttt{with\_mask} category exhibits notably lower mean values across all channels, with the most significant reduction observed in the overall luminance. This reduction is quantitatively consistent with approximately 30-40\% of the facial area being occluded by black masks. The standard deviation values remain relatively stable between categories, indicating that the variance in pixel intensities within non-occluded regions is preserved. The minimum and maximum pixel values span the full 8-bit range $[0, 255]$ for both categories, confirming the presence of both completely dark (mask regions) and bright (specular highlights) pixels in the dataset.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{EDA_result/03_pixel_statistics.png}
+    \caption{Summary table of pixel statistics including mean, standard deviation, minimum, and maximum values for each RGB channel across both image categories.}
+    \label{fig:pixel_statistics}
+\end{figure}
+
+\subsubsection{Brightness Distribution Analysis}
+
+The brightness distribution analysis, computed using the standard luminance formula $Y = 0.299R + 0.587G + 0.114B$, reveals significant differences between the two image categories. As shown in Figure~\ref{fig:brightness_distribution}, the \texttt{without\_mask} images exhibit a roughly normal distribution centered around a mean brightness of approximately 120, indicating well-exposed facial photographs with balanced lighting conditions. The \texttt{with\_mask} images demonstrate a leftward shift in the brightness distribution, with a lower mean value attributable to the dark mask regions. The overlapping regions of these distributions represent the brightness characteristics of the unoccluded facial areas, which remain consistent between categories. This brightness differential provides an implicit signal that generative models can leverage to identify and reconstruct masked regions, as the target reconstruction should shift the brightness distribution toward the original, unmasked profile.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{EDA_result/04_brightness_distribution.png}
+    \caption{Brightness distribution comparison between \texttt{with\_mask} and \texttt{without\_mask} categories. Vertical dashed lines indicate mean brightness values for each category.}
+    \label{fig:brightness_distribution}
+\end{figure}
+
+\subsubsection{Bright and Dark Pixel Ratio Analysis}
+
+To further quantify the impact of mask occlusions on image luminance, we computed the ratio of bright pixels (intensity $> 128$) to dark pixels (intensity $\leq 128$) for each image category. The heatmap visualization in Figure~\ref{fig:pixel_intensity_heatmap} presents these ratios in a comparative format. The \texttt{without\_mask} category demonstrates a balanced distribution with approximately 52\% bright pixels and 48\% dark pixels, consistent with naturally lit facial photographs. In contrast, the \texttt{with\_mask} category shows a significant shift toward dark pixels, with approximately 42\% bright and 58\% dark, reflecting the contribution of black mask regions to the overall pixel intensity distribution. This metric serves as a simple yet effective indicator of mask coverage and can be utilized as an auxiliary loss term or evaluation metric in the reconstruction pipeline.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{EDA_result/05_pixel_intensity_heatmap.png}
+    \caption{Heatmap visualization of average bright and dark pixel ratios per image category. The masked images exhibit a higher proportion of dark pixels due to black mask occlusions.}
+    \label{fig:pixel_intensity_heatmap}
+\end{figure}
+
+\subsubsection{Color Balance Analysis}
+
+The overall color balance of the dataset was analyzed by computing the average intensity values across Blue, Green, and Red channels. Figure~\ref{fig:color_balance} illustrates these values in a bar chart format. The Red channel exhibits the highest average intensity (approximately 140), followed by Green (approximately 115), and Blue (approximately 105). This color profile is characteristic of Caucasian and moderately pigmented skin tones, which dominate the CelebA-HQ dataset due to its demographic composition. The warm color bias should be considered when evaluating reconstruction quality, as generative models may exhibit varying performance across different skin tone representations. Furthermore, this color imbalance suggests that perceptual loss functions weighted toward the Red channel may be beneficial for capturing skin tone fidelity in reconstructed images.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{EDA_result/06_color_balance.png}
+    \caption{Average color balance across the dataset showing the relative intensity of Blue, Green, and Red channels. The warm color profile reflects the predominant skin tones in the CelebA-HQ dataset.}
+    \label{fig:color_balance}
+\end{figure}
+
+\subsubsection{Average Image and Spatial Heatmap}
+
+The computation of an average image across the dataset provides insights into the spatial consistency of facial alignment and the typical appearance of face structures. As shown in Figure~\ref{fig:average_heatmap}, the left panel displays the RGB-averaged image, which clearly reveals the canonical facial structure including eye regions, nose, and mouth positioning. The remarkable clarity of these features in the averaged image confirms that the CelebA-HQ dataset maintains excellent facial alignment, a critical property for training generative models that rely on consistent spatial correspondence. The right panel presents a grayscale heatmap visualization using a thermal colormap, which highlights the intensity distribution across spatial locations. The brightest regions correspond to the forehead and cheek areas, which typically exhibit higher reflectance, while the darker regions correspond to hair and background boundaries. This spatial intensity map can inform the design of spatially-weighted loss functions that prioritize reconstruction accuracy in high-visibility facial regions.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{EDA_result/07_average_heatmap.png}
+    \caption{Average image visualization: RGB-averaged face (left) and grayscale intensity heatmap (right). The clear facial structure in the average image confirms consistent alignment across the dataset.}
+    \label{fig:average_heatmap}
+\end{figure}
+
+\subsubsection{Color Palette Representation}
+
+The representative color palettes for each image category are visualized in Figure~\ref{fig:color_palette}. These palettes summarize the mean color, individual channel intensities, and grayscale equivalent for both \texttt{with\_mask} and \texttt{without\_mask} categories. The \texttt{without\_mask} palette exhibits warmer, flesh-toned hues consistent with natural facial coloration, while the \texttt{with\_mask} palette shows a cooler overall tonality due to the influence of black mask regions on the mean color computation. The individual channel strips confirm the Red-dominant color balance discussed previously, and the grayscale representations provide a quick visual reference for the average luminance difference between categories. These color palettes serve as useful reference points for evaluating whether reconstructed images successfully restore the natural coloration of the original, unmasked faces.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{EDA_result/08_color_palette.png}
+    \caption{Color palette representation for \texttt{with\_mask} and \texttt{without\_mask} categories, showing mean color, individual R/G/B channel intensities, and grayscale equivalent.}
+    \label{fig:color_palette}
+\end{figure}
+
+\subsubsection{Dominant Colors Analysis}
+
+To identify the most prevalent colors in the dataset, we applied K-Means clustering with $k=5$ to the aggregated pixel values from sampled images. The resulting dominant color palette is presented in Figure~\ref{fig:dominant_colors}. The five extracted colors correspond to key visual elements commonly found in facial imagery: a warm pinkish-brown representing skin tones with varying undertones, a grayish-brown representing hair and background regions, a darker brown representing shadowed facial areas and hair, a light peachy-pink representing well-lit skin regions, and a medium brown representing transitional skin and hair boundaries. These dominant colors provide valuable insights into the color vocabulary that generative models must learn to reproduce accurately. The presence of both warm skin tones and cooler background colors suggests that successful face reconstruction requires the model to maintain color coherence while seamlessly blending the reconstructed mask region with surrounding facial features.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{EDA_result/09_dominant_colors.png}
+    \caption{Top 5 dominant colors extracted using K-Means clustering. These colors represent skin tones, hair colors, and background elements commonly found in the dataset.}
+    \label{fig:dominant_colors}
+\end{figure}
+
+\subsubsection{Brightness and Sharpness Distribution}
+
+The final component of our EDA examines both brightness and sharpness distributions across the combined dataset. As illustrated in Figure~\ref{fig:brightness_sharpness}, the left panel displays the average brightness distribution with a fitted normal curve, confirming that the dataset follows an approximately Gaussian brightness profile centered around 120 with moderate variance. This distribution indicates consistent exposure quality across the dataset, which is beneficial for training stability. The right panel presents the sharpness distribution, computed using the variance of the Laplacian operator as a measure of image focus quality. The sharpness values exhibit a right-skewed distribution, with the majority of images showing relatively low sharpness values (around 100) and a long tail extending toward higher values. This skewed distribution suggests that while most images maintain consistent focus quality, some exhibit notably higher edge definition. The relatively modest sharpness values may be attributed to the inherent softness of facial features or compression artifacts, and this characteristic should be considered when designing perceptual loss functions that penalize high-frequency reconstruction errors. Models trained on this data should not be expected to hallucinate excessive texture detail beyond what is present in the training distribution.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{EDA_result/10_brightness_sharpness_distribution.png}
+    \caption{Combined visualization of average brightness distribution (left) and sharpness distribution (right) with fitted normal curves. The brightness follows a Gaussian profile while sharpness exhibits a right-skewed distribution.}
+    \label{fig:brightness_sharpness}
+\end{figure}
+
+\subsubsection{Summary of EDA Findings}
+
+The exploratory data analysis reveals several key characteristics of the CelebA-HQ 256 dataset that have direct implications for face reconstruction under mask occlusion. The dataset exhibits excellent uniformity in image dimensions and format specifications, ensuring consistent input conditions for generative models. The color analysis reveals a warm, Red-channel-dominant color profile characteristic of human facial imagery, with masked images showing predictable shifts in brightness and color statistics due to the introduction of black occluding regions. The spatial analysis confirms consistent facial alignment across the dataset, which is crucial for models that learn position-specific feature reconstruction. The sharpness analysis indicates moderate texture detail in the training images, setting appropriate expectations for reconstruction fidelity. These findings collectively inform the design of loss functions, network architectures, and evaluation metrics employed in subsequent chapters of this work.
+
+\subsection{Training Data Preparation}
+\label{subsec:data_preparation}
+
+The preparation of training data plays a crucial role in ensuring the quality and performance of the face reconstruction model. This study utilizes the CelebA-HQ dataset with images resized to $256 \times 256$ pixels, which undergoes an automated masking pipeline to simulate occluded facial regions. This can be called the synthetic masking process, since our dataset only contains images without proper masks.
+
+\subsubsection{Mask Generation Process}
+
+The mask generation process is designed to simulate the facial occlusion caused by protective masks. As illustrated in Figure~\ref{fig:masking_process}, the pipeline transforms ground truth images into their corresponding masked versions by applying a black rectangular region to the lower portion of detected faces.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{prepare dataset.png}
+    \caption{The masking pipeline: transformation from ground truth image to masked image with black occlusion covering the lower facial region.}
+    \label{fig:masking_process}
+\end{figure}
+
+The masking procedure begins with face detection using the OpenCV DNN Face Detector, which employs an SSD-based architecture to localize facial bounding boxes. For each detected face with bounding box coordinates $(x_1, y_1, x_2, y_2)$, the mask region is computed to cover approximately the lower 45\% of the face, encompassing the nose, mouth, and chin areas. The mask starting position is determined by $y_{mask} = y_1 + 0.55 \times (y_2 - y_1)$, and all pixels within this rectangular region are set to zero across all RGB channels, effectively creating a black occlusion that simulates mask coverage.
+
+\subsubsection{Dataset Organization}
+
+Following the preprocessing stage, the dataset is organized into two parts: the set of images without mask containing the original ground truth images that serve as reconstruction targets, and the set of masked images containing the corresponding masked images used as model inputs. Each image pair shares identical filenames, ensuring a one-to-one correspondence between input and target images during the training process. This structured organization facilitates efficient data loading and maintains consistency throughout the training pipeline.
+
+\vspace*{1.2cm}
+\section{Evaluation Metrics}
+\label{subsec:evaluation_metrics}
+
+Model performance is evaluated using three complementary metrics that assess reconstruction quality from different perspectives. 
+
+\subsection{Structural Similarity Index (SSIM)}
+
+SSIM~\cite{ssim2004} measures the perceptual similarity between two images by comparing luminance, contrast, and structural information:
+
+\begin{equation}
+\text{SSIM}(\hat{\mathbf{y}}, \mathbf{y}) = \frac{(2\mu_{\hat{y}}\mu_y + C_1)(2\sigma_{\hat{y}y} + C_2)}{(\mu_{\hat{y}}^2 + \mu_y^2 + C_1)(\sigma_{\hat{y}}^2 + \sigma_y^2 + C_2)}
+\label{eq:ssim}
+\end{equation}
+
+where $\mu_{\hat{y}}$ and $\mu_y$ are the mean pixel values, $\sigma_{\hat{y}}^2$ and $\sigma_y^2$ are the variances, $\sigma_{\hat{y}y}$ is the covariance, and $C_1 = (0.01 \times L)^2$ and $C_2 = (0.03 \times L)^2$ are stabilization constants with $L = 255$ being the dynamic range. SSIM values range from $-1$ to $1$, with $1$ indicating perfect similarity.
+
+\subsection{Peak Signal-to-Noise Ratio (PSNR)}
+
+PSNR~\cite{psnr2010} quantifies reconstruction quality based on the Mean Squared Error (MSE) between generated and ground truth images:
+
+\begin{equation}
+\text{MSE} = \frac{1}{CHW} \sum_{c,i,j} (\hat{y}_{c,i,j} - y_{c,i,j})^2
+\label{eq:mse}
+\end{equation}
+
+\begin{equation}
+\text{PSNR} = 10 \cdot \log_{10}\left(\frac{L^2}{\text{MSE}}\right) = 20 \cdot \log_{10}(L) - 10 \cdot \log_{10}(\text{MSE})
+\label{eq:psnr}
+\end{equation}
+
+where $L = 255$ is the maximum pixel value. PSNR is measured in decibels (dB), with higher values indicating better reconstruction quality. Generally, PSNR values above 30 dB indicate good quality, while values above 40 dB indicate excellent quality.
+\subsection{Fréchet Inception Distance (FID)}
+
+The Fréchet Inception Distance (FID) \cite{heusel2017gans} is a metric for evaluating the quality of generated images by comparing the statistical properties of generated images to real images in a learned feature space. Unlike pixel-based metrics, FID captures perceptual quality by measuring distribution similarity.
+
+FID uses the Inception-v3 network pre-trained on ImageNet to extract feature representations from both real and generated image sets. The metric computes the Fréchet distance (also known as Wasserstein-2 distance) between two multivariate Gaussian distributions fitted to these features:
+
+\begin{equation}
+    \text{FID} = \|\mu_r - \mu_g\|^2 + \text{Tr}\left(\Sigma_r + \Sigma_g - 2\sqrt{\Sigma_r \Sigma_g}\right)
+\end{equation}
+
+where $\mu_r$ and $\mu_g$ are the mean feature vectors of real and generated images respectively, $\Sigma_r$ and $\Sigma_g$ are their corresponding covariance matrices, and $\text{Tr}(\cdot)$ denotes the matrix trace operation.
+
+The FID score has many strong contribution to the overall performance. The lower FID score is, the better the model performance is (FID = 0 indicates identical distributions - perfect. FID $<$ 10 indicates excellent quality; FID $<$ 50 indicates good quality; FID $>$ 100 suggests significant distribution mismatch). This metric also captures texture, structure, and semantic features that pixel-based metrics may miss.
+
+\vspace*{1.2cm}
+\section{GAN with double convolutional blocks} 
+\label{sec:model_architecture}
+
+This section provides a comprehensive description of the neural network architecture and training methodology employed in our face reconstruction system. The model follows the Generative Adversarial Network (GAN) paradigm, consisting of a Generator network based on the U-Net architecture~\cite{unet2015} and a Discriminator network utilizing the PatchGAN design~\cite{pix2pix2017}. And there is a slight tweak to the input, as it does not reconstruct the entire image, but focuses only on reconstructing the masked area.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\textwidth]{gan_framework_overview.png}
+    \caption{Overall GAN framework}
+    \label{fig:gan_overview}
+\end{figure}
+% =============================================================================
+\subsection{Generator Network Architecture}
+\label{subsec:generator}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{generator.png}
+    \caption{Generator architecture - UNet}
+    \label{fig:gen}
+\end{figure}
+
+The Generator network(figure \ref{fig:gen} $G$ is responsible for reconstructing the masked portion of face images. It employs a U-Net encoder-decoder architecture~\cite{unet2015} with skip connections, which has proven highly effective for image-to-image translation tasks. The Generator accepts a masked input image $\mathbf{x} \in \mathbb{R}^{3 \times 256 \times 256}$ and produces a reconstructed output image $\hat{\mathbf{y}} \in \mathbb{R}^{3 \times 256 \times 256}$:
+
+\begin{equation}
+\hat{\mathbf{y}} = G(\mathbf{x}; \theta_G)
+\label{eq:generator_mapping}
+\end{equation}
+
+where $\theta_G$ represents the learnable parameters of the Generator.
+
+\subsubsection{DoubleConv Block}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{doubleconv.png}
+    \caption{Overall GAN framework}
+    \label{fig:doublecov}
+\end{figure}
+
+The fundamental building block of the Generator is the DoubleConv module, which applies two consecutive convolution operations with batch normalization and ReLU activation. Given an input feature map $\mathbf{F}_{in} \in \mathbb{R}^{C_{in} \times H \times W}$, the DoubleConv block produces output $\mathbf{F}_{out} \in \mathbb{R}^{C_{out} \times H \times W}$ through the following operations:
+
+\begin{equation}
+\mathbf{F}_1 = \text{ReLU}(\text{BN}(\mathbf{W}_1 * \mathbf{F}_{in} + \mathbf{b}_1))
+\label{eq:doubleconv_1}
+\end{equation}
+
+\begin{equation}
+\mathbf{F}_{out} = \text{ReLU}(\text{BN}(\mathbf{W}_2 * \mathbf{F}_1 + \mathbf{b}_2))
+\label{eq:doubleconv_2}
+\end{equation}
+
+where $\mathbf{W}_1 \in \mathbb{R}^{C_{out} \times C_{in} \times 3 \times 3}$ and $\mathbf{W}_2 \in \mathbb{R}^{C_{out} \times C_{out} \times 3 \times 3}$ are convolutional kernels with size $3 \times 3$, the operator $*$ denotes the convolution operation with padding of 1 to preserve spatial dimensions, BN represents Batch Normalization, and ReLU is the Rectified Linear Unit activation function defined as $\text{ReLU}(z) = \max(0, z)$.
+
+\subsubsection{Encoder Path}
+
+The encoder consists of four downsampling stages that progressively reduce spatial resolution while increasing channel depth. Each encoder stage $i$ applies a DoubleConv block followed by $2 \times 2$ max pooling with stride 2. Let $\mathbf{E}_0 = \mathbf{x}$ denote the input image, the encoder operations are defined as:
+
+\begin{equation}
+\mathbf{S}_i = \text{DoubleConv}_i(\mathbf{E}_{i-1}), \quad i \in \{1, 2, 3, 4\}
+\label{eq:encoder_doubleconv}
+\end{equation}
+
+\begin{equation}
+\mathbf{E}_i = \text{MaxPool}_{2 \times 2}(\mathbf{S}_i), \quad i \in \{1, 2, 3, 4\}
+\label{eq:encoder_pool}
+\end{equation}
+
+where $\mathbf{S}_i$ represents the skip connection features that will be passed to the corresponding decoder stage. The encoder layer specifications are detailed as follows. The first encoder stage (Down 1) receives input with 3 channels and spatial dimensions $256 \times 256$, applies DoubleConv to produce 64 channels, and after max pooling outputs feature maps of size $64 \times 128 \times 128$. The second encoder stage (Down 2) transforms from 64 to 128 channels, reducing spatial dimensions to $64 \times 64$. The third encoder stage (Down 3) transforms from 128 to 256 channels with output dimensions $32 \times 32$. The fourth encoder stage (Down 4) transforms from 256 to 512 channels with output dimensions $16 \times 16$.
+
+\subsubsection{Bottleneck}
+
+The bottleneck layer operates at the lowest spatial resolution and highest channel depth, serving as the bridge between encoder and decoder. It applies a DoubleConv block to the encoder output:
+
+\begin{equation}
+\mathbf{B} = \text{DoubleConv}_{bottleneck}(\mathbf{E}_4): \mathbb{R}^{512 \times 16 \times 16} \rightarrow \mathbb{R}^{1024 \times 16 \times 16}
+\label{eq:bottleneck}
+\end{equation}
+
+The bottleneck captures the most abstract, high-level semantic representations essential for understanding global facial structure.
+
+\subsubsection{Decoder Path}
+
+The decoder consists of four upsampling stages that progressively increase spatial resolution while decreasing channel depth. Each decoder stage applies transposed convolution for upsampling, concatenates with the corresponding skip connection, and applies a DoubleConv block for feature refinement. Let $\mathbf{D}_0 = \mathbf{B}$ denote the bottleneck output, the decoder operations are:
+
+\begin{equation}
+\mathbf{U}_i = \text{ConvTranspose2d}_{2 \times 2, s=2}(\mathbf{D}_{i-1}), \quad i \in \{1, 2, 3, 4\}
+\label{eq:decoder_upsample}
+\end{equation}
+
+\begin{equation}
+\mathbf{C}_i = \text{Concat}(\mathbf{S}_{5-i}, \mathbf{U}_i)
+\label{eq:decoder_concat}
+\end{equation}
+
+\begin{equation}
+\mathbf{D}_i = \text{DoubleConv}_i(\mathbf{C}_i), \quad i \in \{1, 2, 3, 4\}
+\label{eq:decoder_doubleconv}
+\end{equation}
+
+The transposed convolution operation with kernel size 2 and stride 2 doubles the spatial dimensions. The concatenation operation combines skip connection features with upsampled features along the channel dimension, effectively doubling the input channels for the subsequent DoubleConv block.
+
+The decoder layer specifications proceed as follows. The first decoder stage (Up 1) receives 1024 channels from bottleneck, upsamples to $32 \times 32$, concatenates with 512-channel skip connection to form 1536 channels, and produces 512-channel output. The second decoder stage (Up 2) upsamples to $64 \times 64$, concatenates with 256-channel skip connection to form 768 channels, producing 256-channel output. The third decoder stage (Up 3) upsamples to $128 \times 128$, concatenates with 128-channel skip connection to form 384 channels, producing 128-channel output. The fourth decoder stage (Up 4) upsamples to $256 \times 256$, concatenates with 64-channel skip connection to form 192 channels, producing 64-channel output.
+
+\subsubsection{Output Layer}
+
+The final output layer transforms the 64-channel feature map to a 3-channel RGB image using a $1 \times 1$ convolution followed by Tanh activation:
+
+\begin{equation}
+\hat{\mathbf{y}} = \tanh(\mathbf{W}_{out} * \mathbf{D}_4 + \mathbf{b}_{out}): \mathbb{R}^{64 \times 256 \times 256} \rightarrow [-1, 1]^{3 \times 256 \times 256}
+\label{eq:generator_output}
+\end{equation}
+
+where $\mathbf{W}_{out} \in \mathbb{R}^{3 \times 64 \times 1 \times 1}$ is the output convolution kernel. The Tanh activation function constrains pixel values to the range $[-1, 1]$, matching the normalized input range.
+
+% =============================================================================
+\subsection{Discriminator Network Architecture}
+\label{subsec:discriminator}
+
+The Discriminator network $D$ distinguishes between real images and generated images using the PatchGAN architecture~\cite{pix2pix2017}. Unlike traditional discriminators that output a single probability value, PatchGAN produces an $N \times N$ grid of probabilities, where each element assesses the authenticity of a corresponding receptive field in the input:
+
+\begin{equation}
+\mathbf{P} = D(\mathbf{y}; \theta_D): \mathbb{R}^{3 \times 256 \times 256} \rightarrow [0, 1]^{15 \times 15}
+\label{eq:discriminator_mapping}
+\end{equation}
+
+where $\theta_D$ represents the learnable parameters of the Discriminator and each element $P_{ij}$ indicates the probability that the corresponding patch in the input is real.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{discriminator1.png}
+    \caption{Discriminator architecture - PatchGAN}
+    \label{fig:dis}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{PatchGAN.png}
+    \caption{PatchGAN - each neuron can "see" a patch of pixels in the input image}
+    \label{fig:patchgan}
+\end{figure}
+\vspace*{1.2cm}
+\subsubsection{CNNBlock Module}
+
+The fundamental building block of the Discriminator is the CNNBlock, which combines strided convolution, batch normalization, and LeakyReLU activation:
+
+\begin{equation}
+\text{CNNBlock}(\mathbf{F}) = \text{LeakyReLU}_{\alpha}(\text{BN}(\mathbf{W} * \mathbf{F} + \mathbf{b}))
+\label{eq:cnnblock}
+\end{equation}
+
+where $\mathbf{W} \in \mathbb{R}^{C_{out} \times C_{in} \times 4 \times 4}$ is a convolutional kernel with size $4 \times 4$ and stride 2, and the LeakyReLU activation is defined as:
+
+\begin{equation}
+\text{LeakyReLU}_{\alpha}(z) = \begin{cases} z & \text{if } z > 0 \\ \alpha z & \text{if } z \leq 0 \end{cases}
+\label{eq:leakyrelu}
+\end{equation}
+
+with negative slope $\alpha = 0.2$. The reflect padding mode is employed to reduce boundary artifacts.
+
+\subsubsection{Discriminator Layers}
+
+The Discriminator architecture begins with an initial convolution layer without batch normalization, following established GAN training practices. Given input image $\mathbf{y} \in \mathbb{R}^{3 \times 256 \times 256}$, the forward pass proceeds as:
+
+\begin{equation}
+\mathbf{h}_0 = \text{LeakyReLU}_{0.2}(\mathbf{W}_0 * \mathbf{y} + \mathbf{b}_0): \mathbb{R}^{3 \times 256 \times 256} \rightarrow \mathbb{R}^{64 \times 128 \times 128}
+\label{eq:disc_initial}
+\end{equation}
+
+where $\mathbf{W}_0 \in \mathbb{R}^{64 \times 3 \times 4 \times 4}$ with stride 2 and padding 1. The subsequent CNNBlock layers are:
+
+\begin{equation}
+\mathbf{h}_1 = \text{CNNBlock}_{64 \rightarrow 128}(\mathbf{h}_0): \mathbb{R}^{64 \times 128 \times 128} \rightarrow \mathbb{R}^{128 \times 64 \times 64}
+\label{eq:disc_layer1}
+\end{equation}
+
+\begin{equation}
+\mathbf{h}_2 = \text{CNNBlock}_{128 \rightarrow 256}(\mathbf{h}_1): \mathbb{R}^{128 \times 64 \times 64} \rightarrow \mathbb{R}^{256 \times 32 \times 32}
+\label{eq:disc_layer2}
+\end{equation}
+
+\begin{equation}
+\mathbf{h}_3 = \text{CNNBlock}_{256 \rightarrow 512}(\mathbf{h}_2): \mathbb{R}^{256 \times 32 \times 32} \rightarrow \mathbb{R}^{512 \times 16 \times 16}
+\label{eq:disc_layer3}
+\end{equation}
+
+The final output layer applies a $4 \times 4$ convolution with stride 1 followed by Sigmoid activation:
+
+\begin{equation}
+\mathbf{P} = \sigma(\mathbf{W}_{out} * \mathbf{h}_3 + \mathbf{b}_{out}): \mathbb{R}^{512 \times 16 \times 16} \rightarrow [0, 1]^{1 \times 15 \times 15}
+\label{eq:disc_output}
+\end{equation}
+
+where $\sigma(z) = \frac{1}{1 + e^{-z}}$ is the Sigmoid activation function and $\mathbf{W}_{out} \in \mathbb{R}^{1 \times 512 \times 4 \times 4}$.
+
+\subsubsection{Receptive Field Analysis}
+
+The effective receptive field of each output element can be computed recursively through the network layers. For a convolution layer with kernel size $k$, stride $s$, and input receptive field $r_{in}$, the output receptive field is:
+
+\begin{equation}
+r_{out} = r_{in} + (k - 1) \times \prod_{l=1}^{L-1} s_l
+\label{eq:receptive_field}
+\end{equation}
+
+For our architecture with four $4 \times 4$ convolutions with strides $[2, 2, 2, 2, 1]$, each output element has an effective receptive field of $94 \times 94$ pixels, computed as follows: starting with RF=1, after Initial layer (k=4, s=2): RF=4, after CNNBlock1 (k=4, s=2): RF=10, after CNNBlock2 (k=4, s=2): RF=22, after CNNBlock3 (k=4, s=2): RF=46, after Final Conv (k=4, s=1): RF=94.
+
+% =============================================================================
+\subsection{Weight Initialization}
+\label{subsec:weight_init}
+
+Both networks employ Gaussian weight initialization, which is critical for stable GAN training. All convolutional, transposed convolutional, and batch normalization layer weights are initialized as:
+
+\begin{equation}
+w_{ij} \sim \mathcal{N}(\mu = 0, \sigma^2 = 0.0004)
+\label{eq:weight_init}
+\end{equation}
+
+This corresponds to a standard deviation of $\sigma = 0.02$, following the DCGAN initialization protocol. The small variance prevents gradient explosion during early training iterations.
+
+% =============================================================================
+\subsection{Training Objective}
+\label{subsec:training_objective}
+
+The training process follows the adversarial paradigm where the Generator and Discriminator are trained alternately. The overall optimization problem can be formulated as a minimax game:
+
+\begin{equation}
+\min_{\theta_G} \max_{\theta_D} \mathcal{L}_{GAN}(G, D) + \lambda_{L1} \mathcal{L}_{L1}(G) + \lambda_{VGG} \mathcal{L}_{VGG}(G)
+\label{eq:minimax}
+\end{equation}
+
+% =============================================================================
+\subsection{Loss Functions}
+\label{subsec:loss_functions}
+
+The training utilizes a composite loss function consisting of three components: adversarial loss, pixel-wise reconstruction loss, and perceptual loss.
+
+\subsubsection{Adversarial Loss}
+
+The adversarial loss encourages the Generator to produce images that are indistinguishable from real images according to the Discriminator. Given input image $\mathbf{x}$, ground truth image $\mathbf{y}$, and generated image $\hat{\mathbf{y}} = G(\mathbf{x})$, the adversarial losses are defined using Binary Cross-Entropy (BCE):
+
+\begin{equation}
+\mathcal{L}_{adv}^{D} = -\frac{1}{N^2} \sum_{i,j} \left[ \log D(\mathbf{y})_{ij} + \log(1 - D(\hat{\mathbf{y}})_{ij}) \right]
+\label{eq:disc_loss}
+\end{equation}
+
+\begin{equation}
+\mathcal{L}_{adv}^{G} = -\frac{1}{N^2} \sum_{i,j} \log D(\hat{\mathbf{y}})_{ij}
+\label{eq:gen_adv_loss}
+\end{equation}
+
+where $N = 7$ is the spatial dimension of the Discriminator output grid. The Discriminator is trained to maximize the probability of correctly classifying real images as real ($D(\mathbf{y}) \rightarrow 1$) and generated images as fake ($D(\hat{\mathbf{y}}) \rightarrow 0$). The Generator is trained to minimize the probability of the Discriminator correctly identifying generated images as fake ($D(\hat{\mathbf{y}}) \rightarrow 1$).
+
+\subsubsection{L1 Reconstruction Loss}
+
+The L1 loss enforces pixel-wise similarity between the generated image and ground truth, promoting structural accuracy:
+
+\begin{equation}
+\mathcal{L}_{L1} = \frac{1}{CHW} \sum_{c=1}^{C} \sum_{i=1}^{H} \sum_{j=1}^{W} |\hat{y}_{c,i,j} - y_{c,i,j}|
+\label{eq:l1_loss}
+\end{equation}
+
+where $C = 3$ is the number of color channels, and $H = W = 128$ are the spatial dimensions. The L1 norm is preferred over L2 as it produces sharper results with less blurring.
+
+\subsubsection{VGG Perceptual Loss}
+
+The VGG perceptual loss measures similarity in the feature space of a pre-trained VGG-19 network, encouraging the generated image to match the perceptual features of the ground truth. Let $\phi_l$ denote the feature extraction function at layer $l$ of VGG-19, the perceptual loss is defined as:
+
+\begin{equation}
+\mathcal{L}_{VGG} = \sum_{l \in \mathcal{S}} \frac{1}{C_l H_l W_l} \|\phi_l(\hat{\mathbf{y}}) - \phi_l(\mathbf{y})\|_2^2
+\label{eq:vgg_loss}
+\end{equation}
+
+where $\mathcal{S} = \{\text{relu1\_1}, \text{relu2\_1}, \text{relu3\_1}, \text{relu4\_1}, \text{relu5\_1}\}$ is the set of feature extraction layers, and $C_l$, $H_l$, $W_l$ are the channel, height, and width dimensions of features at layer $l$. The VGG-19 network is pre-trained on ImageNet and its weights are frozen during training. The multi-scale feature matching captures both low-level textures (shallow layers) and high-level semantics (deep layers).
+
+\subsubsection{Total Generator Loss}
+
+The total Generator loss combines all three components with weighting coefficients:
+
+\begin{equation}
+\mathcal{L}_G = \lambda_{adv} \mathcal{L}_{adv}^{G} + \lambda_{L1} \mathcal{L}_{L1} + \lambda_{VGG} \mathcal{L}_{VGG}
+\label{eq:total_gen_loss}
+\end{equation}
+
+where the loss weights are set as $\lambda_{adv} = 1$, $\lambda_{L1} = 100$, and $\lambda_{VGG} = 10$. The high weight on L1 loss ensures structural fidelity, while the VGG loss promotes perceptual quality and the adversarial loss encourages realistic textures.
+
+\subsubsection{Total Discriminator Loss}
+
+The Discriminator loss is computed as the average of real and fake classification losses:
+
+\begin{equation}
+\mathcal{L}_D = \frac{1}{2} \left( \text{BCE}(D(\mathbf{y}), \mathbf{1}) + \text{BCE}(D(G(\mathbf{x})), \mathbf{0}) \right)
+\label{eq:total_disc_loss}
+\end{equation}
+
+where $\mathbf{1}$ and $\mathbf{0}$ are tensors of ones and zeros matching the Discriminator output dimensions, and the Binary Cross-Entropy is:
+
+\begin{equation}
+\text{BCE}(\hat{p}, p) = -\frac{1}{N^2} \sum_{i,j} \left[ p_{ij} \log(\hat{p}_{ij}) + (1 - p_{ij}) \log(1 - \hat{p}_{ij}) \right]
+\label{eq:bce}
+\end{equation}
+
+% =============================================================================
+\subsection{Optimization}
+\label{subsec:optimization}
+
+\subsubsection{Adam Optimizer}
+
+Both networks are optimized using the Adam optimizer, which combines momentum with adaptive learning rates. The parameter update rule for Adam is:
+
+\begin{equation}
+m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t
+\label{eq:adam_m}
+\end{equation}
+
+\begin{equation}
+v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2
+\label{eq:adam_v}
+\end{equation}
+
+\begin{equation}
+\hat{m}_t = \frac{m_t}{1 - \beta_1^t}, \quad \hat{v}_t = \frac{v_t}{1 - \beta_2^t}
+\label{eq:adam_bias_correction}
+\end{equation}
+
+\begin{equation}
+\theta_{t+1} = \theta_t - \eta \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}
+\label{eq:adam_update}
+\end{equation}
+
+where $g_t = \nabla_\theta \mathcal{L}$ is the gradient at time step $t$, $m_t$ and $v_t$ are the first and second moment estimates, $\beta_1 = 0.5$ and $\beta_2 = 0.999$ are the exponential decay rates, $\eta = 0.0002$ is the learning rate for both networks, and $\epsilon = 10^{-8}$ is a small constant for numerical stability. The reduced $\beta_1 = 0.5$ (compared to the default 0.9) is specifically chosen for GAN training to reduce momentum and stabilize the adversarial optimization.
+
+\subsubsection{Learning Rate Scheduling}
+
+A ReduceLROnPlateau scheduler~\cite{lrplateau2012} is employed to adaptively reduce the learning rate when training plateaus. The scheduler monitors the respective loss for each network and reduces the learning rate when no improvement is observed:
+
+\begin{equation}
+\eta_{t+1} = \begin{cases} \gamma \cdot \eta_t & \text{if no improvement for } p \text{ epochs} \\ \eta_t & \text{otherwise} \end{cases}
+\label{eq:lr_scheduler}
+\end{equation}
+
+where $\gamma = 0.5$ is the reduction factor and $p = 5$ is the patience parameter. This strategy allows the model to escape local minima and fine-tune during later training stages.
+
+% =============================================================================
+\subsection{Training Configuration}
+\label{subsec:training_config}
+
+The training configuration parameters are summarized in Table \ref{tab:training_config}. The model is trained on RGB images of size $128 \times 128$ pixels with a batch size of 16. The dataset is split with 90\% for training and 10\% for validation. Training proceeds for a maximum of 100 epochs with checkpoints saved at each epoch to enable resumable training.
+
+\begin{table}[htbp]
+\centering
+\caption{Training Hyperparameters and Configuration}
+\label{tab:training_config}
+\begin{tabular}{|l|c|l|}
+\hline
+\textbf{Parameter} & \textbf{Value} & \textbf{Description} \\
+\hline
+Image Size & $256 \times 256$ & Input/output spatial dimensions \\
+Batch Size & 8 & Samples per training iteration \\
+Number of Epochs & 50 & Maximum training epochs \\
+Learning Rate (G) & 0.0002 & Generator learning rate \\
+Learning Rate (D) & 0.0002 & Discriminator learning rate \\
+$\beta_1$ & 0.5 & Adam first moment decay \\
+$\beta_2$ & 0.999 & Adam second moment decay \\
+$\lambda_{L1}$ & 100 & L1 reconstruction loss weight \\
+$\lambda_{VGG}$ & 10 & VGG perceptual loss weight \\
+$\lambda_{adv}$ & 1 & Adversarial loss weight \\
+Train/Val Split & 90\%/10\% & Dataset partition ratio \\
+LR Scheduler Factor & 0.5 & Learning rate reduction factor \\
+LR Scheduler Patience & 5 & Epochs before LR reduction \\
+\hline
+\end{tabular}
+\end{table}
+
+% =============================================================================
+\subsection{Training Procedure}
+\label{subsec:training_procedure}
+
+The training procedure follows an alternating optimization scheme. At each iteration, a batch of unmasked face images is sampled and synthetic masks are applied to create input-target pairs. The training proceeds with two phases per iteration.
+
+In the first phase, the Discriminator is updated. The Generator produces fake images $\hat{\mathbf{y}} = G(\mathbf{x})$ from masked inputs. The Discriminator evaluates both real images $\mathbf{y}$ and fake images $\hat{\mathbf{y}}$ (with gradients detached to prevent Generator updates). The Discriminator loss $\mathcal{L}_D$ is computed and backpropagated, and the Discriminator parameters are updated via Adam.
+
+In the second phase, the Generator is updated. The Discriminator evaluates the fake images $\hat{\mathbf{y}}$ (this time allowing gradient flow). The composite Generator loss $\mathcal{L}_G$ is computed including adversarial, L1, and VGG components. The Generator parameters are updated via Adam while the Discriminator remains fixed.
+
+The synthetic mask generation applies a rectangular mask to the lower portion of the face, covering approximately 45\% of the image height (from 50\% to 95\%) and 70\% of the image width (from 15\% to 85\%). The masked region is filled with black pixels (value $-1$ in the normalized range $[-1, 1]$).
+
+\subsection{Model Summary}
+\label{subsec:model_summary}
+
+\begin{table}[htbp]
+\centering
+\caption{Complete Model Architecture Summary}
+\label{tab:model_summary}
+\begin{tabular}{|l|c|c|}
+\hline
+\textbf{Property} & \textbf{Generator} & \textbf{Discriminator} \\
+\hline
+Architecture & U-Net & PatchGAN \\
+Input Shape & $(3, 256, 256)$ & $(3, 256, 256)$ \\
+Output Shape & $(3, 256, 256)$ & $(1, 15, 15)$ \\
+Encoder Channels & $[64, 128, 256, 512]$ & -- \\
+Decoder Channels & $[512, 256, 128, 64]$ & -- \\
+Discriminator Channels & -- & $[64, 128, 256, 512]$ \\
+Bottleneck Channels & 1024 & -- \\
+Skip Connections & 4 & 0 \\
+Output Activation & Tanh & Sigmoid \\
+Hidden Activation & ReLU & LeakyReLU(0.2) \\
+Normalization & BatchNorm & BatchNorm (except layer 1) \\
+Approximate Parameters & $\sim$54.4M & $\sim$2.8M \\
+\hline
+\end{tabular}
+\end{table}
+\newpage
+\subsection{Experimental Results and Analysis}
+
+This section presents the experimental results of the ImprovedPremiumGAN model, including training performance analysis and cross-dataset validation on the FFHQ dataset.
+
+\subsubsection{Training Performance}
+
+The model was trained for 50 epochs on 27,000 images from the CelebA-HQ 256×256 dataset. Figure~\ref{fig:training_overview} presents a comprehensive overview of all training metrics across epochs.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{figures/training_overview.png}
+    \caption{Training overview showing the evolution of all metrics over 50 epochs. The green dashed lines and red stars indicate the best checkpoint at Epoch 49.}
+    \label{fig:training_overview}
+\end{figure}
+
+The training process exhibited three distinct phases. During the early phase (Epochs 0--10), the model experienced rapid learning with Generator Loss dropping 48.3\% (from 33.22 to 17.18), L1 Loss decreasing from 12.45 to 3.09, and SSIM improving from 0.716 to 0.883. The mid phase (Epochs 10--30) showed gradual refinement with VGG Perceptual Loss reducing from 11.57 to 10.12 and Discriminator Loss stabilizing around 0.21--0.31, indicating balanced adversarial dynamics. In the final phase (Epochs 30--49), the model converged to optimal performance with SSIM reaching 0.883 and PSNR achieving 23.78 dB at Epoch 49. The stable Discriminator Loss (decreasing to 0.21) and consistent improvement across both reconstruction metrics (L1, PSNR) and perceptual metrics (VGG Loss) confirm effective training without mode collapse.
+
+\subsubsection{Result on test set of \textit{CelebA} dataset}
+
+
+\begin{table}[htbp]
+    \centering
+    \caption{Quantitative Results on CelebA-HQ Test Set (3,000 images)}
+    \label{tab:celeba_results}
+    \begin{tabular}{lc}
+        \toprule
+        \textbf{Metric} & \textbf{Value} \\
+        \midrule
+        PSNR (masked region) & 23.18 dB \\
+        PSNR (full image) & 30.45 dB \\
+        SSIM (full image) & 0.9367 \\
+        VGG Perceptual Loss & 1.2834 \\
+        MSE (masked region) & 0.0048 \\
+        MSE (unmasked region) & 0.00005 \\
+        FID Score & 4.82 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Table~\ref{tab:celeba_results} summarizes the quantitative performance of our Premium GAN model on 3,000 test images from the CelebA-HQ dataset. The model achieves a PSNR of 23.18 dB for the masked region and 30.45 dB for the full image, indicating accurate pixel-level reconstruction. The SSIM of 0.9367 confirms strong structural similarity with the ground truth images. The low MSE values (0.0048 for masked regions and 0.00005 for unmasked regions) demonstrate precise reconstruction while preserving the original content. Furthermore, the VGG Perceptual Loss of 1.2834 and FID Score of 4.82 indicate that the generated images are perceptually realistic and statistically similar to real face images. These results validate the effectiveness of our U-Net generator with skip connections and PatchGAN discriminator for face reconstruction tasks.
+
+\subsubsection{Cross-Dataset Validation on \textit{FFHQ}}
+
+To rigorously evaluate the model's generalization capability beyond the training distribution, we conducted validation on the Flickr-Faces-HQ (FFHQ) dataset\footnote{\url{https://www.kaggle.com/datasets/arnaud58/flickrfaceshq-dataset-ffhq}}.
+
+The FFHQ dataset consists of 70,000 high-quality face images at 1024×1024 resolution, collected from Flickr. Unlike CelebA-HQ which primarily contains celebrity faces, FFHQ includes diverse subjects with varying ages, ethnicities, image backgrounds, and accessories such as eyeglasses, sunglasses, and hats. This diversity makes FFHQ an excellent benchmark for assessing cross-dataset generalization. For our validation, we randomly selected \textbf{3,000 images} from this dataset.
+
+The validation procedure consists of the following steps:
+\begin{enumerate}
+    \item \textbf{Image Loading and Resizing}: Each FFHQ image (originally 512×512 in Kaggle version) is loaded and resized to 256×256 pixels using bicubic interpolation to match the model's input requirements.
+    
+    \item \textbf{Face Detection}: OpenCV's DNN-based face detector (ResNet-10 SSD pre-trained model) is applied to detect facial regions. This detector processes images through a 300×300 blob with mean subtraction values (104.0, 177.0, 123.0) and outputs bounding boxes with confidence scores.
+    
+    \item \textbf{Mask Generation}: For each detected face, a black rectangular mask is applied to the \textbf{lower 45\% of the face bounding box}, covering the nose-mouth-chin region. This simulates the occlusion pattern used during training and represents realistic face mask coverage.
+    
+    \item \textbf{Face Reconstruction}: The masked image is fed into the trained Generator network, which produces a reconstructed face attempting to recover the occluded facial features.
+    
+    \item \textbf{Metric Computation}: The reconstructed image is compared against the original ground truth using multiple evaluation metrics.
+\end{enumerate}
+
+Table~\ref{tab:validation_results} presents the comprehensive validation metrics on the FFHQ dataset, and it demonstrates strong cross-dataset generalization. The SSIM of 0.9299 exceeds training SSIM (0.880), indicating the model learned generalizable facial representations. The FID Score of 5.56 confirms excellent perceptual quality, as values below 10 indicate generated images are nearly indistinguishable from real images. The 96× difference between MSE of masked (0.0067) versus unmasked regions (0.00007) confirms the model preserves visible areas while effectively reconstructing occluded regions
+
+\begin{table}[htbp]
+    \centering
+    \caption{Cross-Dataset Validation Results on FFHQ (3,000 images)}
+    \label{tab:validation_results}
+    \begin{tabular}{lc}
+        \toprule
+        \textbf{Metric} & \textbf{Value} \\
+        \midrule
+        PSNR (masked region) & 22.01 dB \\
+        PSNR (full image) & 29.02 dB \\
+        SSIM (full image) & 0.9299 \\
+        VGG Perceptual Loss & 1.4467 \\
+        MSE (masked region) & 0.0067 \\
+        MSE (unmasked region) & 0.00007 \\
+        FID Score & 5.56 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsubsection{Best Checkpoint Analysis}
+
+The best performing checkpoint was identified at \textbf{Epoch 49} based on a combined evaluation of all metrics. Table~\ref{tab:best_checkpoint} summarizes the training metrics at this checkpoint alongside the improvement from initial training.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Best Checkpoint Metrics (Epoch 49) and Training Improvement}
+    \label{tab:best_checkpoint}
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Metric} & \textbf{Initial (Epoch 0)} & \textbf{Best (Epoch 49)} & \textbf{Improvement} \\
+        \midrule
+        Discriminator Loss & 0.5850 & 0.2149 & -63.3\% \\
+        Generator Loss & 33.218 & 17.184 & -48.3\% \\
+        L1 Loss & 12.451 & 3.085 & -75.2\% \\
+        VGG Loss & 19.567 & 10.118 & -48.3\% \\
+        SSIM & 0.7163 & 0.8834 & +23.3\% \\
+        PSNR (dB) & 17.10 & 23.78 & +39.1\% \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The Epoch 49 checkpoint demonstrates substantial improvement across all metrics. The L1 Loss reduction of 75.2\% indicates significantly enhanced pixel-level reconstruction accuracy. The PSNR improvement of 39.1\% (from 17.10 dB to 23.78 dB) represents a major enhancement in signal quality, while the SSIM increase of 23.3\% confirms better structural similarity between generated and ground truth images. These improvements, combined with the excellent cross-dataset validation results, confirm that the ImprovedPremiumGAN model successfully learns robust facial reconstruction capabilities.
+
+\subsubsection{Visual Results}
+
+Figure~\ref{fig:sample_results} presents sample reconstruction results on the FFHQ validation dataset, demonstrating the model's practical performance on diverse face images.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\textwidth]{figures/epoch_49_batch_3000.png}
+    \caption{Sample reconstruction results on FFHQ dataset. Each row shows: (left) masked input with black rectangle covering the lower face region, (center) generated reconstruction by ImprovedPremiumGAN, and (right) ground truth original image. The model successfully reconstructs realistic facial features including nose, mouth, and chin across diverse subjects.}
+    \label{fig:sample_results}
+\end{figure}
+
+The visual results demonstrate that the model successfully reconstructs natural-looking facial features in the masked regions. The generated nose, mouth, and chin areas exhibit realistic skin texture, appropriate shadow gradients, and proper anatomical proportions. Importantly, the reconstructed regions blend seamlessly with the preserved upper face areas, indicating effective boundary handling. These qualitative results, combined with the quantitative metrics, confirm the effectiveness of the ImprovedPremiumGAN architecture for face reconstruction under mask occlusion.
+
+\newpage
+\section{Partial Convolution GAN}
+\subsection{Model Overview}
+
+The model consists of two main components:
+
+\begin{itemize}
+    \item \textbf{Generator $G$}: A U-Net architecture that takes a masked image $I_m \in \mathbb{R}^{3 \times 256 \times 256}$ and a binary mask $M \in \{0,1\}^{1 \times 256 \times 256}$ (where 0 denotes occluded pixels) as input, and outputs a reconstructed image $\hat{I} \in [-1,1]^{3 \times 256 \times 256}$.
+    \item \textbf{Discriminator $D$}: A PatchGAN that evaluates local patches of the reconstructed image for realism, outputting a feature map of size $1 \times 30 \times 30$.
+\end{itemize}
+
+The core innovation is the use of \textbf{Partial Convolution} (PConv) layers, which condition every convolution on the mask to prevent invalid pixels from influencing features. This is implemented as per the code, with separate handling for feature and mask paths.
+
+\subsection{Partial Convolution Layer}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{model_pipeline.png}
+    \caption{Generator architecture}
+    \label{fig:gen}
+\end{figure}
+
+The Partial Convolution layer is the building block of the generator. It processes both the feature map $x$ and the mask $m$ jointly, as defined in the code.
+
+\subsubsection{Implementation Details}
+
+The \texttt{PartialConv2d} module is defined as follows:
+
+\begin{itemize}
+    \item It contains two convolutional layers:
+      \begin{itemize}
+        \item \texttt{input\_conv}: A standard \texttt{nn.Conv2d} for features, with configurable in/out channels, kernel size (default 3), stride (default 1), padding (default 1), and bias (default True).
+        \item \texttt{mask\_conv}: A \texttt{nn.Conv2d} with 1 input channel (mask), out channels matching features, same kernel/stride/padding, but no bias.
+      \end{itemize}
+    \item The \texttt{mask\_conv} weights are initialized to constant 1.0 using \texttt{torch.nn.init.constant\_}, and all its parameters are set to \texttt{requires\_grad = False} to freeze them during training.
+\end{itemize}
+
+This setup ensures the mask convolution acts as a summing operation over the receptive field, counting valid pixels without learning.
+
+\subsubsection{Forward Pass}
+
+In the forward method:
+
+\begin{align}
+\text{mask\_out} &= \text{mask\_conv}(\mathbf{m}), \\
+\text{out} &= \text{input\_conv}(\mathbf{x} \odot \mathbf{m}), \\
+\text{out} &= \text{out} \odot \frac{(\text{mask\_out} > 0).\text{float()}}{\text{mask\_out} + 10^{-8}}, \\
+\text{new\_mask} &= (\text{mask\_out} > 0).\text{float()}, \\
+\text{new\_mask} &= \max(\text{new\_mask}, \text{dim=1, keepdim=True})[0].
+\end{align}
+
+This normalizes the feature convolution by the number of valid inputs (mask\_out sums the 1s in the receptive field), and sets output to 0 where no valid inputs exist. The new mask is binary, indicating if any valid pixel was in the receptive field, and max-reduced to 1 channel.
+
+This formulation allows progressive expansion of valid regions as layers deepen, filling in occluded areas based on surrounding context.
+
+\subsection{Generator Architecture (U-Net with PConv)}
+
+The generator follows a U-Net structure with four downsampling and four upsampling stages, plus a bottleneck, as implemented in the code. The forward pass explicitly propagates both features and masks through each stage, with skip connections fusing high-resolution information from the encoder to the decoder.
+
+\subsubsection{Encoder Path}
+
+The encoder extracts multi-scale features from the masked input while progressively downsampling the spatial resolution. Each encoder stage consists of a Partial Convolution block followed by Batch Normalization, ReLU activation, and 2x2 max pooling. Importantly, the mask is propagated and downsampled alongside the features to maintain alignment.
+
+Formally, for each encoder stage $i$, given input features $\mathbf{X}_{i-1}$ and mask $\mathbf{M}_{i-1}$:
+
+\begin{align}
+\mathbf{F}_i, \mathbf{M}'_i &= \text{PConv}_i(\mathbf{X}_{i-1}, \mathbf{M}_{i-1}), \\
+\mathbf{F}_i &= \text{BatchNorm}(\mathbf{F}_i), \\
+\mathbf{F}_i &= \text{ReLU}(\mathbf{F}_i), \\
+\mathbf{S}_i &= \mathbf{F}_i \quad (\text{skip connection feature}), \\
+\mathbf{X}_i &= \text{MaxPool}_{2\times2}(\mathbf{F}_i), \\
+\mathbf{M}_i &= \text{MaxPool}_{2\times2}(\mathbf{M}'_i).
+\end{align}
+
+The max pooling on the mask ensures that validity is preserved conservatively: a pooled region is valid only if all inputs were valid. However, since the mask is binary and post-PConv, it reflects expanded valid regions.
+
+The stages are configured as follows:
+
+\begin{table}[H]
+\centering
+\caption{Encoder stages configuration}
+\begin{tabular}{lccccc}
+\toprule
+Stage & Input Channels & Output Channels & Kernel Size & Padding & Output Size (post-pool) \\
+\midrule
+E1 & 3   & 64  & 3$\times$3 & 1 & 64 $\times$ 128$\times$128 \\
+E2 & 64  & 128 & 3$\times$3 & 1 & 128 $\times$ 64$\times$64 \\
+E3 & 128 & 256 & 3$\times$3 & 1 & 256 $\times$ 32$\times$32 \\
+E4 & 256 & 512 & 3$\times$3 & 1 & 512 $\times$ 16$\times$16 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Stage E1}: Processes the initial masked RGB input (3 channels) to produce 64 feature channels. The Partial Convolution extracts low-level features like edges and textures from valid pixels only. After BN and ReLU, the features $\mathbf{S}_1$ are stored for skip, and pooling reduces resolution to 128x128.
+
+\textbf{Stage E2}: Takes the 64-channel downsampled features, expands to 128 channels, capturing mid-level patterns. Mask propagation ensures occluded areas do not bias the features.
+
+\textbf{Stage E3}: Further abstraction to 256 channels, focusing on semantic structures like eyes and hairlines in unoccluded regions.
+
+\textbf{Stage E4}: Deepest encoder layer with 512 channels, providing high-level contextual understanding for reconstruction.
+
+The skip features $\mathbf{S}_i$ retain pre-pooling resolution and are used in the decoder for detail preservation.
+
+\subsubsection{Bottleneck}
+
+The bottleneck processes the deepest features without further downsampling:
+
+\begin{align}
+\mathbf{B}, \mathbf{M}_B &= \text{PConv}( \mathbf{X}_4, \mathbf{M}_4 ), \\
+\mathbf{B} &= \text{BatchNorm}(\mathbf{B}), \\
+\mathbf{B} &= \text{ReLU}(\mathbf{B}).
+\end{align}
+
+Configuration: 512 input to 512 output channels, kernel 3x3, padding 1. This layer aggregates global context from the progressively filled valid regions, preparing for upsampling.
+
+\subsubsection{Decoder Path}
+
+The decoder reconstructs the image by upsampling the bottleneck features and fusing them with encoder skips. Each stage uses nearest-neighbor upsampling for artifact-free scaling, followed by channel-wise concatenation and Partial Convolution refinement.
+
+For each decoder stage $j$ (from 4 to 1), given input $\mathbf{D}_{j+1}, \mathbf{M}_{j+1}$ (with $\mathbf{D}_5 = \mathbf{B}, \mathbf{M}_5 = \mathbf{M}_B$):
+
+\begin{align}
+\mathbf{U}_j &= \text{Upsample}_{\times 2}(\mathbf{D}_{j+1}), \\
+\mathbf{M}'_j &= \text{Upsample}_{\times 2}(\mathbf{M}_{j+1}), \\
+\mathbf{C}_j &= \text{Concat}(\mathbf{U}_j, \mathbf{S}_{5-j}), \\
+\mathbf{M}_j &= \max(\mathbf{M}'_j, \mathbf{M}_{5-j}), \\
+\mathbf{D}_j, \mathbf{M}''_j &= \text{PConv}_j(\mathbf{C}_j, \mathbf{M}_j), \\
+\mathbf{D}_j &= \text{BatchNorm}(\mathbf{D}_j), \\
+\mathbf{D}_j &= \text{ReLU}(\mathbf{D}_j).
+\end{align}
+
+Nearest upsampling avoids checkerboard patterns, and max fusion ensures the most conservative validity map. For the final stage D1, no concatenation occurs (input channels remain 64).
+
+The stages are configured as follows:
+
+\begin{table}[H]
+\centering
+\caption{Decoder stages configuration}
+\begin{tabular}{lccccc}
+\toprule
+Stage & Input Channels (post-concat) & Output Channels & Kernel Size & Padding & Output Size \\
+\midrule
+D4 & 512 + 256 = 768 & 256 & 3$\times$3 & 1 & 256 $\times$ 32$\times$32 \\
+D3 & 256 + 128 = 384 & 128 & 3$\times$3 & 1 & 128 $\times$ 64$\times$64 \\
+D2 & 128 + 64 = 192  & 64  & 3$\times$3 & 1 & 64 $\times$ 128$\times$128 \\
+D1 & 64 (no concat)   & 64  & 3$\times$3 & 1 & 64 $\times$ 256$\times$256 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Stage D4}: Upsamples the 512-channel bottleneck to 32x32, concatenates with E3's 256-channel skip (total 768), refines to 256 channels. This integrates global semantics with mid-level features.
+
+\textbf{Stage D3}: Upsamples to 64x64, concatenates with E2's 128-channel skip (384 total), outputs 128 channels, focusing on structural alignment.
+
+\textbf{Stage D2}: Upsamples to 128x128, concatenates with E1's 64-channel skip (192 total), outputs 64 channels, recovering fine details.
+
+\textbf{Stage D1}: Upsamples to 256x256 without skip, refines the 64-channel features for final high-resolution output preparation.
+
+This progressive fusion allows the model to synthesize coherent lower-face regions using context from unoccluded parts.
+
+\subsubsection{Output Layer}
+
+The output layer maps the final decoder features to the RGB image space. It consists of a Partial Convolution that reduces the channel dimension from 64 to 3, processing the feature map and mask from the last decoder stage.
+
+In detail:
+
+\begin{itemize}
+    \item Input: Features (64 $\times$ 256 $\times$ 256) and mask (1 $\times$ 256 $\times$ 256) from D1.
+    \item PartialConv: Applies the masked convolution formula to generate raw RGB values, ensuring that any remaining invalid regions (though minimal at this stage due to progressive filling) are handled appropriately. Kernel size 3x3 for local refinement.
+    \item Activation: A hyperbolic tangent ($\tanh$) function is applied element-wise to the output, constraining values to the range $[-1, 1]$. This matches the normalized input image range and stabilizes gradients during backpropagation.
+\end{itemize}
+
+No further mask update is performed, as the output is the final image. The Partial Convolution here ensures seamless blending: in unmasked regions (where $M=1$), the output closely preserves the original pixels due to normalization; in masked regions ($M=0$), synthesized content is generated from surrounding valid contexts.
+
+This design prevents artifacts at mask boundaries and aligns with the reconstruction objective, where the generator learns to inpaint only the occluded lower face while keeping the rest intact.
+
+\subsection{Discriminator Architecture (PatchGAN)}
+
+The discriminator is implemented as a custom \texttt{Discriminator} class inheriting from \texttt{nn.Module}. It follows a fully convolutional PatchGAN architecture, which evaluates the realism of overlapping local patches rather than the entire image. This design encourages local consistency and high-frequency realism in the generated reconstructions.
+
+Spectral normalization is applied to every convolutional layer to enforce Lipschitz continuity, stabilizing adversarial training by constraining the discriminator's gradient magnitude.
+
+\subsubsection{Implementation Details}
+
+The discriminator is constructed using a \texttt{nn.Sequential} module composed of five convolutional layers. Each convolution is wrapped with spectral normalization via \texttt{nn.utils.spectral\_norm}. A helper function is defined as:
+
+\begin{verbatim}
+def SpectralNorm(module):
+    return nn.utils.spectral_norm(module)
+\end{verbatim}
+
+No explicit weight initialization is specified; therefore, PyTorch's default initialization scheme is used (Kaiming uniform initialization for convolutional layers).
+
+All convolutional layers use a kernel size of $4\times4$ with padding set to 1. The stride varies across layers to progressively reduce spatial resolution while increasing feature depth.
+
+\subsubsection{Layer Configuration}
+
+The discriminator architecture consists of the following layers:
+
+\begin{itemize}
+    \item \textbf{Layer 1}: \texttt{SpectralNorm(nn.Conv2d(3, 64, 4, 2, 1))} followed by \texttt{nn.LeakyReLU(0.2, inplace=True)}. This layer processes the RGB input and downsamples the spatial resolution to $128\times128$.
+
+    \item \textbf{Layer 2}: \texttt{SpectralNorm(nn.Conv2d(64, 128, 4, 2, 1))} with \texttt{nn.LeakyReLU(0.2, inplace=True)}, producing feature maps of size $64\times64$.
+
+    \item \textbf{Layer 3}: \texttt{SpectralNorm(nn.Conv2d(128, 256, 4, 2, 1))} followed by \texttt{nn.LeakyReLU(0.2, inplace=True)}, resulting in $32\times32$ feature maps.
+
+    \item \textbf{Layer 4}: \texttt{SpectralNorm(nn.Conv2d(256, 512, 4, 1, 1))} with \texttt{nn.LeakyReLU(0.2, inplace=True)}. This layer maintains spatial resolution while refining high-level features.
+
+    \item \textbf{Layer 5}: \texttt{SpectralNorm(nn.Conv2d(512, 1, 4, 1, 1))}. The final layer outputs a single-channel feature map representing patch-wise realism scores. No activation function is applied, as raw logits are used for the adversarial loss.
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\caption{Discriminator layer configuration}
+\begin{tabular}{lcccccc}
+\toprule
+Layer & In Channels & Out Channels & Kernel & Stride & Padding & Output Size \\
+\midrule
+1 & 3   & 64  & $4\times4$ & 2 & 1 & $64 \times 128 \times 128$ \\
+2 & 64  & 128 & $4\times4$ & 2 & 1 & $128 \times 64 \times 64$ \\
+3 & 128 & 256 & $4\times4$ & 2 & 1 & $256 \times 32 \times 32$ \\
+4 & 256 & 512 & $4\times4$ & 1 & 1 & $512 \times 31 \times 31$ \\
+5 & 512 & 1   & $4\times4$ & 1 & 1 & $1 \times 30 \times 30$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+LeakyReLU with a negative slope of 0.2 is used after the first four layers to prevent dead neurons and improve gradient flow during training.
+
+\subsubsection{Forward Pass}
+
+The forward pass simply applies the sequential model to the input:
+
+\begin{verbatim}
+def forward(self, x):
+    return self.model(x)
+\end{verbatim}
+
+For an input tensor of shape $(\text{batch}, 3, 256, 256)$, the discriminator produces an output of shape $(\text{batch}, 1, 30, 30)$. Each element in this grid corresponds to the realism score of a local image patch, with an effective receptive field of approximately $70\times70$ pixels.
+
+Spectral normalization is applied dynamically during training by normalizing each layer's weight matrix with respect to its largest singular value. This enforces a $1$-Lipschitz constraint on the discriminator, improving training stability and reducing the risk of mode collapse.
+
+Overall, this PatchGAN-based discriminator emphasizes local texture consistency, which is particularly important for realistic face reconstruction in occluded regions such as the lower face.
+
+\subsection{Optimization}
+
+Both networks are optimized using the Adam optimizer (\texttt{torch.optim.Adam}):
+
+\begin{itemize}
+    \item \textbf{Generator Optimizer}:
+\begin{verbatim}
+optG = optim.Adam(G.parameters(), lr=2e-4, betas=(0.5, 0.999))
+\end{verbatim}
+Learning rate: $2 \times 10^{-4}$, $\beta_1 = 0.5$, $\beta_2 = 0.999$.
+    \item \textbf{Discriminator Optimizer}:
+\begin{verbatim}
+optD = optim.Adam(D.parameters(), lr=1e-4, betas=(0.5, 0.999))
+\end{verbatim}
+Learning rate: $1 \times 10^{-4}$ (half of generator's), same betas.
+\end{itemize}
+
+The lower $\beta_1 = 0.5$ (compared to default 0.9) is commonly used in image generation tasks to improve stability and reduce oscillations. The discriminator uses a smaller learning rate to prevent it from overpowering the generator early in training.
+
+\subsection{Loss Functions}
+
+Training the proposed Partial Convolution GAN requires a carefully designed loss
+function that simultaneously enforces pixel-level accuracy, perceptual consistency,
+and visual realism. To this end, the generator is optimized using a weighted
+combination of reconstruction, perceptual, and adversarial losses, while the
+discriminator is trained solely using adversarial supervision.
+
+\subsubsection{Reconstruction Loss}
+
+The reconstruction loss enforces accurate pixel-level recovery in occluded regions.
+A Smooth L1 loss (\texttt{nn.SmoothL1Loss} with $\beta = 1.0$) is applied exclusively
+to masked pixels:
+
+\begin{equation}
+\mathcal{L}_{rec} =
+\left\|
+(1 - M) \odot (\hat{I} - I)
+\right\|_{\text{SmoothL1}},
+\end{equation}
+
+where $I$ denotes the ground-truth image, $\hat{I}$ is the reconstructed output, and
+$M \in \{0,1\}^{1 \times H \times W}$ is the binary mask indicating valid pixels
+($M=1$) and occluded regions ($M=0$).
+
+Restricting the loss to masked regions ensures that the generator focuses on
+inpainting the missing content rather than unnecessarily modifying already valid
+pixels. The Smooth L1 formulation combines the advantages of L1 and L2 losses:
+it behaves quadratically for small errors and linearly for large errors, making it
+more robust to outliers and reducing excessive penalization of large reconstruction
+errors during early training.
+
+\subsubsection{Perceptual Loss}
+
+While reconstruction loss enforces local pixel accuracy, it is insufficient to
+capture high-level semantic consistency. To address this limitation, a perceptual
+loss is employed using feature representations extracted from a pre-trained VGG-19
+network:
+
+\begin{equation}
+\mathcal{L}_{perc} =
+\sum_{l \in \mathcal{L}}
+\left\|
+\phi_l(\hat{I}) - \phi_l(I)
+\right\|_1,
+\end{equation}
+
+where $\phi_l(\cdot)$ denotes the activation of the $l$-th selected layer in VGG-19,
+and $\mathcal{L}$ is the set of feature layers used for supervision.
+
+The perceptual loss encourages the reconstructed image to match the ground truth in
+feature space rather than raw pixel space, promoting semantic coherence and
+structural alignment. This is particularly important for face inpainting, as it helps
+preserve identity-related attributes such as facial structure, symmetry, and global
+appearance. The perceptual loss is weighted by a factor of 0.1 to balance its influence
+relative to the reconstruction loss.
+
+\subsubsection{Adversarial Loss}
+
+To enhance visual realism and reduce blurring artifacts, an adversarial loss is
+introduced through a PatchGAN discriminator. The discriminator is trained using
+binary cross-entropy loss with logits (\texttt{BCEWithLogitsLoss}) to distinguish
+between real images and reconstructed images on a patch-wise basis.
+
+For the discriminator, the objective is defined as:
+
+\begin{equation}
+\mathcal{L}_D =
+\mathbb{E}_{I \sim p_{data}} \left[
+\ell(D(I), 1)
+\right]
++
+\mathbb{E}_{\hat{I} \sim G} \left[
+\ell(D(\hat{I}), 0)
+\right],
+\end{equation}
+
+where $\ell(\cdot,\cdot)$ denotes the binary cross-entropy loss and $D(\cdot)$ outputs
+a patch-wise realism score map.
+
+The generator, on the other hand, is optimized to fool the discriminator by maximizing
+the discriminator's confidence that reconstructed images are real:
+
+\begin{equation}
+\mathcal{L}_{adv} =
+\mathbb{E}_{\hat{I} \sim G} \left[
+\ell(D(\hat{I}), 1)
+\right].
+\end{equation}
+
+The complete generator objective is thus given by:
+
+\begin{equation}
+\mathcal{L}_G =
+\mathcal{L}_{rec}
++ 0.1 \mathcal{L}_{perc}
++ \lambda_{GAN} \mathcal{L}_{adv},
+\end{equation}
+
+where $\lambda_{GAN}$ controls the relative strength of adversarial supervision.
+
+By combining reconstruction, perceptual, and adversarial losses, the proposed training
+objective encourages the generator to produce inpainted images that are locally
+accurate, semantically coherent, and visually realistic. This multi-term loss design
+is well suited for face inpainting tasks, where both structural correctness and
+high-frequency detail preservation are essential.
+
+\subsection{Training}
+
+The model is trained on the CelebA-HQ dataset containing 30,000 high-quality face images.
+All images are resized to $256 \times 256$ and normalized to the range $[-1, 1]$.
+Training is conducted for 30 epochs with a batch size of 16, resulting in approximately
+1,875 iterations per epoch and a total of 56,250 training iterations.
+
+Learning rates for both the generator and discriminator are kept constant throughout
+training to ensure stable convergence. A staged training strategy is adopted to
+gradually introduce adversarial supervision, which is particularly important for
+inpainting tasks where early adversarial pressure can destabilize reconstruction.
+
+\subsubsection{Warm-up Phase}
+
+During the initial warm-up phase, corresponding to approximately the first 30\% of
+training iterations (i.e., the first 9 epochs or $\sim$16,875 iterations), only the
+generator is updated. In this phase, the adversarial loss is disabled, and the generator
+is optimized using reconstruction and perceptual losses:
+
+\begin{equation}
+\mathcal{L}_G^{warm} = \mathcal{L}_{rec} + 0.1 \mathcal{L}_{perc}.
+\end{equation}
+
+This phase allows the generator to learn a stable mapping from masked inputs to plausible
+image completions by leveraging local pixel consistency and high-level perceptual
+features, without being influenced by the discriminator. As a result, the model learns
+to preserve unmasked regions and produce coarse but semantically consistent inpainting
+results in occluded areas.
+
+The warm-up phase also helps prevent common GAN failure modes such as gradient explosion,
+mode collapse, or the discriminator overpowering the generator at early training stages.
+
+\subsubsection{Adversarial Training Phase}
+
+After the warm-up phase, adversarial training is enabled for the remaining 70\% of
+training iterations (approximately 21 epochs). In this stage, both the generator and
+discriminator are trained alternately.
+
+At each iteration:
+\begin{itemize}
+    \item The discriminator $D$ is updated to distinguish real images from reconstructed
+    images produced by the generator, using a patch-wise binary classification loss.
+    \item The generator $G$ is updated to minimize reconstruction and perceptual losses
+    while simultaneously maximizing the discriminator's prediction of realism for the
+    generated images.
+\end{itemize}
+
+The full generator objective becomes:
+
+\begin{equation}
+\mathcal{L}_G = \mathcal{L}_{rec} + 0.1 \mathcal{L}_{perc} + \lambda_{GAN} \mathcal{L}_{adv},
+\end{equation}
+
+where $\lambda_{GAN}$ controls the influence of adversarial supervision.
+
+The discriminator is updated using the binary cross-entropy loss with logits on
+overlapping image patches, following the PatchGAN formulation. To maintain training
+balance, the discriminator uses a smaller learning rate than the generator, preventing
+it from converging too quickly and overwhelming the generator.
+
+\subsubsection{Checkpointing and Stability Considerations}
+
+Model weights and optimizer states for both networks are saved periodically throughout
+training, enabling training resumption in case of interruption and facilitating model
+selection based on validation performance.
+
+The use of Partial Convolution in the generator, combined with spectral normalization in
+the discriminator, further stabilizes adversarial training by preventing invalid pixel
+propagation and controlling discriminator gradients.
+
+Overall, this staged training strategy balances fast convergence with stability, enabling
+the generator to first learn accurate structural reconstruction and then refine local
+textures and realism under adversarial supervision. This approach is particularly well
+suited for face inpainting tasks, where preserving identity and avoiding visual artifacts
+are critical.
+
+\subsection{Model Summary}
+
+\begin{table}[H]
+\centering
+\caption{Complete Model Architecture Summary}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Property} & \textbf{Generator} & \textbf{Discriminator} \\
+\midrule
+Architecture 
+& PConv-UNet 
+& PatchGAN \\
+
+Input Shape 
+& $(3, 256, 256)$ 
+& $(3, 256, 256)$ \\
+
+Output Shape 
+& $(3, 256, 256)$ 
+& $(1, 30, 30)$ \\
+
+Encoder Channels 
+& $[64, 128, 256, 512]$ 
+& $[64, 128, 256, 512]$ \\
+
+Decoder Channels 
+& $[512, 256, 128, 64]$ 
+& -- \\
+
+Bottleneck Channels 
+& $512$ 
+& -- \\
+
+Skip Connections 
+& Partial Conv skips 
+& None \\
+
+Convolution Type 
+& Partial Convolution 
+& Standard Convolution \\
+
+Normalization 
+& BatchNorm 
+& SpectralNorm (all conv layers) \\
+
+Activation Function 
+& ReLU (encoder/decoder), Tanh (output) 
+& LeakyReLU($\alpha=0.2$) \\
+
+Output Activation 
+& Tanh 
+& None (logits) \\
+
+Loss Supervision 
+& Reconstruction, Perceptual, Adversarial 
+& Adversarial \\
+
+Approximate Parameters 
+& $\sim$54M 
+& $\sim$2.8M \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\subsection{Experimental Results and Analysis}
+\subsubsection{Cross-Dataset Validation on FFHQ}
+
+To rigorously evaluate the model's generalization capability beyond the training distribution, we conducted validation on the Flickr-Faces-HQ (FFHQ) dataset\footnote{\url{https://www.kaggle.com/datasets/arnaud58/flickrfaceshq-dataset-ffhq}}.
+
+The FFHQ dataset consists of 70,000 high-quality face images at 1024×1024 resolution, collected from Flickr. Unlike CelebA-HQ which primarily contains celebrity faces, FFHQ includes diverse subjects with varying ages, ethnicities, image backgrounds, and accessories such as eyeglasses, sunglasses, and hats. This diversity makes FFHQ an excellent benchmark for assessing cross-dataset generalization. For our validation, we randomly selected \textbf{3,000 images} from this dataset.
+
+The validation procedure consists of the following steps:
+\begin{enumerate}
+    \item \textbf{Image Loading and Resizing}: Each FFHQ image (originally 512×512 in Kaggle version) is loaded and resized to 256×256 pixels using bicubic interpolation to match the model's input requirements.
+    
+    \item \textbf{Face Detection}: OpenCV's DNN-based face detector (ResNet-10 SSD pre-trained model) is applied to detect facial regions. This detector processes images through a 300×300 blob with mean subtraction values (104.0, 177.0, 123.0) and outputs bounding boxes with confidence scores.
+    
+    \item \textbf{Mask Generation}: For each detected face, a black rectangular mask is applied to the \textbf{lower 45\% of the face bounding box}, covering the nose-mouth-chin region. This simulates the occlusion pattern used during training and represents realistic face mask coverage.
+    
+    \item \textbf{Face Reconstruction}: The masked image is fed into the trained Generator network, which produces a reconstructed face attempting to recover the occluded facial features.
+    
+    \item \textbf{Metric Computation}: The reconstructed image is compared against the original ground truth using multiple evaluation metrics.
+\end{enumerate}
+
+Table~\ref{tab:validation_results} 
+
+\begin{table}[htbp]
+    \centering
+    \caption{Cross-Dataset Validation Results on FFHQ (3,000 images)}
+    \label{tab:validation_results}
+    \begin{tabular}{lc}
+        \toprule
+        \textbf{Metric} & \textbf{Value} \\
+        \midrule
+        PSNR (masked region) & 20.8 dB \\
+        PSNR (full image) & 27.1 dB \\
+        SSIM (full image) & 0.92 \\
+        VGG Perceptual Loss & 1.55 \\
+        MSE (masked region) & 0.008 \\
+        MSE (unmasked region) & 0.0009 \\
+        FID Score & 9.7 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{Multi-Priors Based Model}
+
+\subsection{Overview}
+
+The Multi-Priors Based Lightweight GAN represents an optimized variant of Generative Adversarial Networks tailored for efficient face reconstruction under mask occlusion. Building upon the classical GAN-based inpainting paradigms discussed in previous sections, this approach incorporates multiple facial priors---landmark heatmaps, edge maps, and segmentation channels---to guide the generator in preserving anatomical structure and identity consistency. To address computational constraints common in practical deployments, the model reduces input resolution to 128$\times$128 pixels, employs separable convolutions for parameter efficiency, and simplifies the perceptual loss computation. This results in a 50--60\% reduction in model parameters compared to the Premium GAN baseline~\cite{isola2017image}, while maintaining competitive reconstruction quality.
+
+The core innovation lies in the concatenation of a 4-channel prior map with the masked input image, forming a 7-channel input tensor that conditions the generation process on explicit facial cues. This prior-guided mechanism enables the model to focus on semantically meaningful reconstructions, particularly in occluded lower face regions, by leveraging landmarks for alignment, edges for boundary preservation, and segmentation for region differentiation. Experiments on a subset of the CelebA-HQ dataset (resized to 128$\times$128) demonstrate improved training efficiency and generalization, making this approach suitable for resource-limited environments such as mobile devices or edge computing.
+
+\subsection{Landmark Detection}
+
+Facial landmarks serve as crucial structural cues in guiding the reconstruction process, ensuring that generated features align with anatomical constraints. The LandmarkDetector module employs the dlib library~\cite{king2009dlib} to identify 68 key facial points, including contours of the eyes, nose, mouth, and jawline. In cases where dlib is unavailable, a fallback approximation generates pseudo-landmarks based on average facial proportions.
+
+The detection process begins by converting the input RGB image to grayscale and applying the frontal face detector. For each detected face, the shape predictor extracts landmark coordinates, which are then scaled to the reduced 128$\times$128 resolution (from the original 256$\times$256). The landmarks provide positional guidance for subsequent prior generation, helping the model infer plausible completions for occluded areas based on visible upper face features.
+
+\subsection{Prior Generation}
+
+The PriorGenerator module transforms detected landmarks into a multi-channel prior map that conditions the generator on facial structure. This 4-channel tensor includes:
+
+\begin{itemize}
+\item \textbf{Landmark Heatmap}: Each of the 68 landmarks is rendered as a Gaussian blob with $\sigma = 2.0$, creating a heatmap that emphasizes key points while allowing soft transitions. The heatmap is computed efficiently using meshgrids limited to small kernels (21$\times$21 pixels) around each landmark to reduce computational overhead.
+
+\item \textbf{Edge Map}: Polylines connect landmark contours (e.g., face outline, eyes, nose, mouth) using OpenCV's \texttt{cv2.polylines}, followed by Gaussian filtering ($\sigma = 1.0$) for smoothness. This map preserves sharp boundaries and structural edges, aiding the generator in maintaining facial symmetry.
+
+\item \textbf{Segmentation Channels}: A binary mask is converted into two channels: one for the face region (values < 128 smoothed with $\sigma = 1.5$) and one for the mask region. This segmentation guides the model in distinguishing occluded from visible areas.
+\end{itemize}
+
+The priors are concatenated along the channel dimension: [heatmap (1ch), edge map (1ch), segmentation (2ch)], resulting in a 128$\times$128$\times$4 tensor. Figure~18 illustrates sample prior maps, demonstrating how they capture hierarchical facial information to enhance reconstruction coherence.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7\textwidth]{mask_img1.png}
+    \caption{Examples of priors map}
+    \label{fig:model}
+\end{figure}
+
+\subsection{Mask Generation}
+
+% To simulate realistic mask occlusions, the MaskGenerator creates elliptical binary masks centered on the lower face. Using landmark points (e.g., nose tip at index 30 and mouth center at 51), the module computes a center at approximately 65\% of image height, with axes scaled to cover 35\% width and 25\% height. Random variations in angle ($\pm$15$^\circ$) and scale (0.9--1.1) introduce diversity, ensuring robustness to varied mask shapes.
+To simulate realistic lower-face occlusions that closely follow individual facial anatomy, the MaskGenerator module creates binary masks covering the region from the mid-nose downward (nose tip to chin), tightly bounded by the jawline contour. This landmark-guided approach ensures that the occluded region remains strictly within the face boundaries, preventing leakage into background areas and better mimicking real-world surgical or cloth masks that conform to facial shape.
+
+When landmarks are available, the process proceeds as follows:
+
+\begin{itemize}
+\item A horizontal boundary is established at the midpoint between the nose bridge bottom (landmark 30) and nose tip (landmark 33), typically around 55--60\% of image height.
+\item The jawline contour (landmarks 0--16) is used to trace the left and right boundaries starting from points below this boundary.
+\item A closed polygon is constructed by combining the lower jawline segment, vertical connections along the jaw, and a straight horizontal line across the nose bridge.
+\item The polygon is filled to create the primary occlusion region.
+\item Additional explicit filling is applied to the outer mouth contour (landmarks 48--59) and a dedicated chin polygon (jaw points 5--11 combined with lower lip points 54--57) to guarantee complete coverage of the mouth and chin areas.
+\end{itemize}
+
+Finally, the mask undergoes Gaussian blurring (kernel 7$\times$7) followed by binary thresholding to produce soft yet crisp edges. In the absence of landmarks, a fallback elliptical mask centered at 65\% height with axes covering approximately 35\% width and 25\% height is employed.
+
+This anatomy-aware masking strategy produces more challenging and realistic occlusions compared to simple elliptical or rectangular masks, encouraging the model to learn precise identity-preserving reconstructions while respecting facial boundaries.
+
+If landmarks are unavailable, default positions are used. The resulting mask (values 255 for occluded, 0 otherwise) is applied to whiten occluded pixels in the input image, preparing it for inpainting. This synthetic occlusion strategy aligns with the dataset's black mask simulations, promoting generalization to real-world scenarios.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7\textwidth]{mask_img2.png}
+    \caption{Synthesis Mask}
+    \label{fig:model}
+\end{figure}
+\subsection{Generator Network Architecture}
+
+The generator adopts a lightweight U-Net-inspired encoder-decoder structure~\cite{ronneberger2015u} optimized for efficiency. The input is a 128$\times$128$\times$7 tensor (masked image + priors), processed through four encoder layers with separable convolutions to reduce parameters:
+
+\begin{itemize}
+\item Initial convolution separates image (3ch $\to$ 32ch) and priors (4ch $\to$ 16ch), concatenated to 48ch.
+\item Downsampling layers (strides=2) use separable Conv2D with filters doubling to 256ch at the bottleneck (8$\times$8 resolution).
+\item Decoder upsamples with Conv2DTranspose, incorporating skip connections from the encoder for detail preservation, and dropout (0.3) for regularization.
+\end{itemize}
+
+The output is a 128$\times$128$\times$3 tanh-activated image. Separable convolutions~\cite{chollet2017xception} and reduced filters achieve $\sim$50\% parameter savings compared to standard convolutions. Figure~7 depicts the architecture, highlighting the prior integration for structure-aware generation.
+
+\subsection{Discriminator Network Architecture}
+
+The discriminator follows a lightweight PatchGAN design~\cite{isola2017image}, classifying 16$\times$16 patches for local realism. It processes 128$\times$128$\times$3 inputs through four layers:
+
+\begin{itemize}
+\item Initial Conv2D (32 filters, strides=2) followed by LeakyReLU ($\alpha$=0.2).
+\item Subsequent separable Conv2D layers increase filters to 256, with batch normalization.
+\end{itemize}
+
+The final 1-channel output uses no activation for logits. This architecture reduces parameters by $\sim$60\% via separable operations, focusing on texture discrimination without global context overhead.
+
+\subsection{Perceptual Loss}
+
+To capture high-level feature similarity efficiently, the LightweightPerceptualLoss uses a single layer from pretrained VGG16~\cite{simonyan2014very} (\texttt{block3\_conv3}). Inputs are resized to 128$\times$128, normalized, and preprocessed before computing mean absolute difference. This simplification from multi-layer perceptual losses reduces computation while preserving semantic alignment, weighted at 0.1 in the total loss.
+
+\subsection{Training Objective and Loss Functions}
+
+The training follows a min-max GAN objective, with the generator minimizing a composite loss:
+
+\[
+\mathcal{L}_G = \lambda_{\text{adv}} \cdot \mathcal{L}_{\text{adv}} + \lambda_{L1} \cdot \mathcal{L}_{L1} + \lambda_{\text{perc}} \cdot \mathcal{L}_{\text{perc}} + \lambda_{\text{masked}} \cdot \mathcal{L}_{\text{masked}}
+\]
+
+Where:
+\begin{itemize}
+\item $\mathcal{L}_{\text{adv}}$: Binary cross-entropy adversarial loss.
+\item $\mathcal{L}_{L1}$: Mean absolute error for pixel-wise reconstruction.
+\item $\mathcal{L}_{\text{perc}}$: Simplified perceptual loss.
+\item $\mathcal{L}_{\text{masked}}$: Mask-weighted L1 loss, emphasizing occluded regions.
+\end{itemize}
+
+Weights are $\lambda_{\text{adv}}=1.0$, $\lambda_{L1}=100.0$, $\lambda_{\text{perc}}=0.1$, $\lambda_{\text{masked}}=50.0$. The discriminator minimizes binary cross-entropy on real and generated patches. This formulation balances realism, accuracy, and prior-guided fidelity.
+
+\subsection{Data Pipeline and Preprocessing}
+
+The DataPipeline precomputes and caches data in HDF5 format for efficiency. Paths are loaded from CelebA-HQ, images resized, landmarks detected, masks generated, and priors computed. The DataGenerator yields batches as Sequence, normalizing to $[-1,1]$. Caching accelerates training by avoiding repeated computations.
+
+\subsection{Training Procedure}
+
+Training splits data 90/10 (train/val). Each step computes generator and discriminator losses via \texttt{tf.GradientTape}, applying gradients. Validation monitors composite loss for best model selection. Checkpoints save latest and best weights every 5 epochs. Pseudocode:
+
+\begin{verbatim}
+for epoch in range(30):
+    for batch in train_gen:
+        losses = train_step(real, inputs, masks)
+    val_loss = compute_val_loss(val_gen)
+    save_checkpoints()
+\end{verbatim}
+
+\subsection{Model Summary}
+
+Generator: $\sim$1,200,000 parameters. Discriminator: $\sim$500,000 parameters. Total lighter than Premium GAN, enabling faster inference.
+
+\begin{table}[htbp]
+\centering
+\caption{Model Architecture Summary for Multi-Priors Based Lightweight GAN}
+\label{tab:multi_priors_summary}
+\small
+\begin{tabular}{|l|c|c|}
+\hline
+\textbf{Property} & \textbf{Generator} & \textbf{Discriminator} \\ \hline
+Architecture & Lightweight U-Net & Lightweight PatchGAN \\
+Input / Output Shape & (128,128,7) $\rightarrow$ (128,128,3) & (128,128,3) $\rightarrow$ (16,16,1) \\
+Channels & [48,64,128,256,256,128,64,48] & [32,64,128,256] \\
+Convolution Type & Separable + Standard Conv2D & Separable + Standard Conv2D \\
+Normalization & BatchNorm & BatchNorm \\
+Activation & ReLU / Tanh (output) & LeakyReLU(0.2) / None \\
+Skip Connections & Yes & No \\
+Loss Functions & Adv + L1 + Perceptual + Masked L1 & Adversarial \\
+Parameters & $\sim$1.2M & $\sim$0.5M \\ \hline
+\end{tabular}
+\end{table}
+
+The Multi-Priors Based Lightweight GAN significantly reduces computational complexity compared to previous approaches. By employing separable convolutions, reducing resolution to 128$\times$128, and limiting the number of channels, the generator contains approximately 1.2 million parameters and the discriminator approximately 0.5 million—achieving a total parameter reduction of over 80\% relative to the Premium GAN baseline while incorporating explicit structural priors for improved anatomical consistency.
+
+\subsection{Experimental Results and Analysis}
+
+\begin{table}[htbp]
+    \centering
+    \caption{Cross-Dataset Validation Results on FFHQ (3,000 images)}
+    \label{tab:celeba_results}
+    \begin{tabular}{lc}
+        \toprule
+        \textbf{Metric} & \textbf{Value} \\
+        \midrule
+        PSNR (masked region) &  28.8703 dB \\
+        PSNR (full image) &  35.1250dB \\
+        SSIM (full image) &  0.9712\\
+        VGG Perceptual Loss &  18.3476\\
+        MSE (masked region) &  28.9124\\
+        MSE (unmasked region) &  4.8217\\
+        FID Score &  12.6738\\
+        \bottomrule
+    \end{tabular}
+\end{table}
+The evaluation metrics achieved by the lightweight face inpainting model (trained for 30 epochs at 128$\times$128 resolution on CelebA-HQ, focusing on the lower mouth and chin region) are \textbf{quite good}, placing the model in the \textbf{upper-mid tier} among GAN-based inpainting approaches.
+
+\textbf{Strengths:}  
+\begin{itemize}
+    \item PSNR in the masked region (28.8703\,dB) and full image (35.1250\,dB) are strong, approaching or matching state-of-the-art results for large/irregular masks.
+    \item SSIM of 0.9712 indicates excellent structural preservation and high perceptual similarity to ground truth.
+    \item Low MSE in the unmasked region (4.8217) confirms that the model preserves original details outside the masked area very well.
+\end{itemize}
+
+\textbf{Weaknesses:}  
+\begin{itemize}
+    \item FID score of 13 is acceptable for inpainting tasks (which are inherently harder than pure generation), but suggests room for improvement in overall realism and sample diversity compared to top-tier models.
+\end{itemize}
+
+Given the constraints of a lightweight architecture, reduced image resolution, limited training epochs, and the challenging task of restoring the complex lower-face region using landmark-guided priors, these results are \textbf{highly promising} and demonstrate effective inpainting performance suitable for practical applications. Further improvements in FID could be achieved by increasing perceptual weighting, adopting LPIPS, or extending training duration.
+
+
+\section{GANsformer}
+\subsection{Overview}
+GANsformer is a generative adversarial framework that integrates transformer-based attention into GAN architectures 
+to improve global context modeling. By using a bipartite attention mechanism , GANsformer efficiently captures 
+long-range dependencies while avoiding the high computational cost of full self-attention. 
+
+The GANsformer architecture consists of a U-Net–based generator and a convolutional PatchGAN discriminator, 
+both enhanced with transformer-style bipartite attention. The generator uses an encoder–decoder structure with skip 
+connections, while GANsformer blocks are placed in the bottleneck to model global context. The discriminator 
+progressively downsamples the input image and applies attention at deep feature levels to improve global 
+discrimination. This design combines local convolutional feature extraction with efficient long-range dependency 
+modeling.
+
+\subsection{Bipartite Attention}
+
+\subsubsection{Input Representation}
+Let the pixel features be
+\[
+x \in \mathbb{R}^{B \times N \times C}, \quad N = H \cdot W,
+\]
+and the latent variables be
+\[
+z \in \mathbb{R}^{B \times M \times C},
+\]
+where $B$ is the batch size, $C$ the feature dimension, and $M \ll N$ the number of latents.
+The feature dimension is split into $H$ attention heads with head dimension
+\[
+D = \frac{C}{H}.
+\]
+
+\subsubsection{Multi-Head Projection}
+Linear projections without bias are applied:
+\[
+Q_z = z W_Q^{(z)}, \quad
+K_x = x W_K^{(x)}, \quad
+V_x = x W_V^{(x)},
+\]
+\[
+Q_x = x W_Q^{(x)}, \quad
+K_z = z W_K^{(z)}, \quad
+V_z = z W_V^{(z)},
+\]
+where $W_* \in \mathbb{R}^{C \times C}$.
+Each projected tensor is reshaped for multi-head attention:
+\[
+\mathrm{reshape}(Q) \rightarrow \mathbb{R}^{B \times H \times N \times D}.
+\]
+
+\subsubsection{Scaled Dot-Product Attention}
+Given query $Q$, key $K$, and value $V$, attention is computed in FP32:
+\[
+\mathrm{Attn}(Q,K,V)
+=
+\mathrm{softmax}\!\left(
+\frac{Q K^\top}{\sqrt{D}}
+\right) V.
+\]
+
+\subsubsection{Phase 1: Aggregation (Pixels \texorpdfstring{$\rightarrow$}{->} Latents)}
+Latent variables gather information from pixel features:
+\[
+\tilde{z} = \mathrm{Attn}(Q_z, K_x, V_x),
+\]
+\[
+z^{+} =
+\mathrm{LN}\!\left(
+z + \mathrm{merge}(\tilde{z})
+\right),
+\]
+where $\mathrm{merge}(\cdot)$ reshapes multi-head outputs back to $\mathbb{R}^{B \times M \times C}$.
+
+\subsubsection{Phase 2: Broadcast (Latents \texorpdfstring{$\rightarrow$}{->} Pixels)}
+Updated latents broadcast global context back to pixels:
+\[
+\tilde{x} = \mathrm{Attn}(Q_x, K_{z^{+}}, V_{z^{+}}),
+\]
+\[
+x^{+} =
+\mathrm{LN}\!\left(
+x + \mathrm{merge}(\tilde{x})
+\right).
+\]
+
+\subsubsection{Output}
+The bipartite attention module returns the updated pixel and latent features:
+\[
+(x^{+}, z^{+}) = \mathrm{BA}(x, z).
+\]
+This two-phase mechanism enables efficient global context modeling with complexity
+\[
+\mathcal{O}(B \cdot N \cdot M),
+\]
+which is significantly lower than full self-attention.
+
+
+\subsection{Generator Network}
+
+\subsubsection{Initial Convolution}
+Given a masked input image $x_m \in \mathbb{R}^{3 \times 256 \times 256}$, the generator first applies a $7\times7$ convolution without spatial downsampling:
+\[
+x_0 =
+\mathrm{LReLU}_{0.2}\!\left(
+\mathrm{IN}\!\left(
+\mathrm{Conv}_{7\times7}(x_m)
+\right)
+\right),
+\]
+where $\mathrm{IN}(\cdot)$ denotes instance normalization. This produces the initial feature map $x_0 \in \mathbb{R}^{C_0 \times 256 \times 256}$.
+
+\subsubsection{Encoder Blocks}
+The encoder consists of three downsampling stages. Each encoder block applies a strided convolution followed by residual refinement:
+\[
+e_i^{\downarrow} =
+\mathrm{LReLU}_{0.2}\!\left(
+\mathrm{IN}\!\left(
+\mathrm{Conv}_{4\times4,s=2}(e_{i-1})
+\right)
+\right),
+\quad i \in \{1,2,3\},
+\]
+followed by two residual blocks:
+\[
+e_i = \mathcal{R}_2\!\left(\mathcal{R}_1\!\left(e_i^{\downarrow}\right)\right),
+\]
+where each residual block is defined as
+\[
+\mathcal{R}(x) =
+\mathrm{LReLU}_{0.2}\!\left(
+x + \mathrm{IN}\!\left(\mathrm{Conv}_{3\times3}\!\left(
+\mathrm{LReLU}_{0.2}\!\left(\mathrm{IN}(\mathrm{Conv}_{3\times3}(x))\right)
+\right)\right)
+\right).
+\]
+The encoder reduces the spatial resolution from $256\times256$ to $32\times32$.
+
+\subsubsection{GANsformer Bottleneck}
+At the bottleneck, the feature map $e_3 \in \mathbb{R}^{C \times 32 \times 32}$ is processed by a stack of GANsformer blocks. For each block, the computation is:
+\[
+\tilde{x} =
+\mathrm{LReLU}_{0.2}\!\left(
+\mathrm{IN}\!\left(
+\mathrm{Conv}_{3\times3}(e_3)
+\right)
+\right),
+\]
+\[
+X = \mathrm{reshape}(\tilde{x}) \in \mathbb{R}^{N \times C}, \quad N = 32^2,
+\]
+\[
+Z = \mathrm{expand}(L) \in \mathbb{R}^{M \times C},
+\]
+\[
+X' = \mathrm{BA}(X, Z),
+\]
+\[
+e_3' =
+\mathrm{IN}\!\left(
+\mathrm{Conv}_{3\times3}(\mathrm{reshape}^{-1}(X'))
+\right) + e_3,
+\]
+where $L$ denotes learnable latent vectors and $\mathrm{BA}(\cdot)$ is the bipartite attention operator. Four such blocks are applied sequentially.
+
+\subsubsection{Decoder Blocks}
+The decoder mirrors the encoder using transposed convolutions. Each decoder block performs upsampling followed by skip connection addition:
+\[
+d_i^{\uparrow} =
+\mathrm{ReLU}\!\left(
+\mathrm{IN}\!\left(
+\mathrm{ConvT}_{4\times4,s=2}(d_{i+1})
+\right)
+\right),
+\]
+\[
+d_i = d_i^{\uparrow} + s_i,
+\]
+where $s_i$ is the corresponding encoder skip feature. Two residual blocks are then applied:
+\[
+d_i = \mathcal{R}_2\!\left(\mathcal{R}_1(d_i)\right).
+\]
+The final decoder stage uses the same formulation but skips residual refinement.
+
+\subsubsection{Output Head}
+The final output image is produced by:
+\[
+\hat{x} =
+\tanh\!\left(
+\mathrm{Conv}_{7\times7}\!\left(
+\mathrm{ReLU}\!\left(
+\mathrm{IN}\!\left(
+\mathrm{Conv}_{3\times3}(d_0)
+\right)
+\right)
+\right)
+\right),
+\]
+which constrains the output to the range $[-1,1]$.
+
+\subsection{Discriminator Network}
+
+\subsubsection{Initial Convolution}
+Given an input image $x \in \mathbb{R}^{3 \times 256 \times 256}$, the discriminator begins with a spectrally normalized convolution:
+\[
+h_0 =
+\mathrm{LReLU}_{0.2}\!\left(
+\mathrm{SN}\!\left(
+\mathrm{Conv}_{4\times4,s=2}(x)
+\right)
+\right),
+\]
+producing a feature map $h_0 \in \mathbb{R}^{64 \times 128 \times 128}$.
+
+\subsubsection{Residual Downsampling Blocks}
+The discriminator extracts features using a sequence of residual downsampling blocks.  
+Each block consists of a downsampling residual block followed by additional residual refinement.
+
+For a residual discriminator block with downsampling:
+\[
+h^{\downarrow} =
+\mathrm{AvgPool}\!\left(
+\mathrm{SN}\!\left(\mathrm{Conv}_{3\times3}\!\left(
+\mathrm{LReLU}_{0.2}\!\left(
+\mathrm{SN}(\mathrm{Conv}_{3\times3}(h))
+\right)
+\right)\right)
+\right),
+\]
+with a skip connection:
+\[
+h_{\text{skip}} =
+\mathrm{AvgPool}\!\left(
+\mathrm{SN}(\mathrm{Conv}_{1\times1}(h))
+\right),
+\]
+and output:
+\[
+\mathcal{D}(h) = \mathrm{LReLU}_{0.2}(h^{\downarrow} + h_{\text{skip}}).
+\]
+
+Using this formulation, feature extraction proceeds as:
+\[
+h_1 = \mathcal{D}_{128}(h_0), \quad
+h_2 = \mathcal{D}_{256}(h_1), \quad
+h_3 = \mathcal{D}_{512}(h_2),
+\]
+corresponding to spatial resolutions $64\times64$, $32\times32$, and $16\times16$, respectively.
+
+\subsubsection{Deep Feature Extraction}
+To increase representational capacity, two additional residual discriminator blocks without downsampling are applied:
+\[
+h_3' = \mathcal{R}\!\left(\mathcal{R}(h_3)\right),
+\]
+where $\mathcal{R}(\cdot)$ denotes a residual discriminator block without spatial pooling.
+
+\subsubsection{Bipartite Attention}
+The deep feature map $h_3' \in \mathbb{R}^{C \times 16 \times 16}$ is flattened:
+\[
+X = \mathrm{reshape}(h_3') \in \mathbb{R}^{N \times C}, \quad N = 16^2,
+\]
+and paired with learnable latent variables
+\[
+Z \in \mathbb{R}^{M \times C}.
+\]
+Bipartite attention is applied as:
+\[
+X^{+} = \mathrm{BA}(X, Z),
+\]
+after which features are reshaped back to spatial form:
+\[
+h_{\text{attn}} = \mathrm{reshape}^{-1}(X^{+}).
+\]
+
+\subsubsection{Post-Attention Processing}
+The attention-enhanced features are refined using an additional residual discriminator block:
+\[
+h_{\text{post}} = \mathcal{R}(h_{\text{attn}}).
+\]
+
+\subsubsection{Classifier Head}
+Finally, a multi-layer classifier produces the real/fake logit:
+\[
+z = \mathrm{GAP}(h_{\text{post}}),
+\]
+\[
+s =
+\mathrm{SN}(W_3)\,
+\mathrm{LReLU}_{0.2}\!\left(
+\mathrm{SN}(W_2)\,
+\mathrm{LReLU}_{0.2}\!\left(
+\mathrm{SN}(W_1)\, z
+\right)
+\right),
+\]
+where $\mathrm{GAP}(\cdot)$ denotes global average pooling and all linear layers are spectrally normalized.
+
+\subsection{Weight Initialization}
+
+Most network parameters are initialized using PyTorch default initialization schemes. 
+Convolutional and linear layers are initialized with Kaiming (He) initialization, which is well suited for LeakyReLU activations and helps maintain stable signal variance across layers. 
+Instance normalization and layer normalization layers are initialized with scale parameters set to $1$ and bias parameters set to $0$.
+
+Learnable latent variables used in the GANsformer blocks and bipartite attention are initialized from a zero-mean normal distribution with small variance:
+\[
+L \sim \mathcal{N}(0, 0.02^2),
+\]
+which prevents large initial attention responses and improves training stability. 
+Spectral normalization is applied to all discriminator convolutional and linear layers after initialization to constrain the Lipschitz constant of the discriminator.
+
+
+\subsection{Loss Functions, Optimization, and Training Procedure}
+
+\subsubsection{Adversarial and Reconstruction Losses}
+The model is trained using a non-saturating GAN objective combined with a reconstruction loss for image inpainting. Let $x_m$ denote a masked input image, $x_r$ the corresponding ground-truth image, and $x_f = G(x_m)$ the generator output.
+
+The discriminator loss is defined as
+\[
+\mathcal{L}_D
+= \mathbb{E}_{x_r}\!\left[\mathrm{softplus}\!\left(-D(x_r)\right)\right]
++ \mathbb{E}_{x_m}\!\left[\mathrm{softplus}\!\left(D(G(x_m))\right)\right],
+\]
+where $\mathrm{softplus}(t)=\log(1+e^t)$.
+
+The generator adversarial loss is
+\[
+\mathcal{L}_G^{\text{GAN}}
+= \mathbb{E}_{x_m}\!\left[\mathrm{softplus}\!\left(-D(G(x_m))\right)\right].
+\]
+
+To enforce pixel-level accuracy in the inpainted regions, an $\ell_1$ reconstruction loss is applied:
+\[
+\mathcal{L}_{\ell_1}
+= \lambda_{\ell_1} \, \mathbb{E}\!\left[\| G(x_m) - x_r \|_1\right],
+\]
+with $\lambda_{\ell_1}=100$.
+
+The total generator objective is therefore
+\[
+\mathcal{L}_G = \mathcal{L}_G^{\text{GAN}} + \mathcal{L}_{\ell_1}.
+\]
+
+\subsubsection{R1 Gradient Penalty}
+To stabilize discriminator training, R1 regularization is applied on real images:
+\[
+\mathcal{L}_{\text{R1}}
+= \frac{\gamma}{2}\,\mathbb{E}_{x_r}\!\left[\left\|\nabla_{x_r} D(x_r)\right\|_2^2\right],
+\]
+where $\gamma = 1.0$. For computational efficiency, this penalty is applied using lazy regularization every $k=16$ discriminator updates, and is disabled during the first $500$ training steps as a warm-up phase.
+
+\subsubsection{Optimization}
+Both networks are optimized using the Adam optimizer. Let $\theta_G$ and $\theta_D$ denote the parameters of the generator and discriminator, respectively. The updates are given by
+\[
+\theta_G \leftarrow \mathrm{Adam}(\theta_G;\,\alpha_G, \beta_1, \beta_2),
+\quad
+\theta_D \leftarrow \mathrm{Adam}(\theta_D;\,\alpha_D, \beta_1, \beta_2),
+\]
+with learning rates $\alpha_G=\alpha_D=2\times10^{-4}$ and momentum parameters $(\beta_1,\beta_2)=(0.0,0.99)$. The discriminator learning rate is adjusted internally to account for lazy R1 regularization.
+
+\subsubsection{Training Procedure}
+Training is performed for $150$ epochs using batches of size $64$ on $256\times256$ images. At each iteration, the generator is first updated to produce a completed image from the masked input. The discriminator is then updated every $N=2$ steps to balance generator--discriminator learning. When applicable, R1 regularization is added to the discriminator loss at the specified interval.
+
+Mixed precision training (fp16) with dynamic gradient scaling is employed to accelerate training and reduce memory consumption. Gradient norms are clipped to a maximum value of $1.0$ to prevent instability. Model compilation via \texttt{torch.compile()} is optionally used to further improve training efficiency. Training progress is monitored using Weights \& Biases, and model checkpoints are saved periodically throughout training.
+
+\subsection{Model summary and results}
+
+\subsubsection{Architecture Summary}
+\begin{table}[htbp]
+    \centering
+    \caption{Gansformer Architecture Summary}
+    \begin{tabular}{|l|c|c|}
+    \hline
+    \textbf{Property} & \textbf{Generator} & \textbf{Discriminator} \\
+    \hline
+    Architecture & Encoder-Decoder + Transformer & Encoder-Decoder + Bipartite Attention \\
+    Input Shape & $(3, 256, 256)$ & $(3, 256, 256)$ \\
+    Output Shape & $(3, 256, 256)$ & $(1)$ \\
+    Encoder Channels & $[64, 128, 256]$ & -- \\
+    Decoder Channels & $[256, 128, 64]$ & -- \\
+    Discriminator Channels & -- & $[64, 128, 256, 512]$ \\
+    Bottleneck Channels & 256 & -- \\
+    Transformer Blocks & 4 & 0 \\
+    Latent Variables & 32 & 32 \\
+    Latent Dimension & 512 & 256 \\
+    Attention Heads & -- & 8 \\
+    Skip connection & 3 & No \\
+    Hidden Activation & ReLU & LeakyReLU(0.2) \\
+    Output Activation & Tanh & None \\
+    Normalization & InstanceNorm & SpectralNorm \\
+    Approximate Parameters & $\sim$18M & $\sim$26M \\
+    \hline
+    \end{tabular}
+    \end{table}
+\newpage
+\subsubsection{Training Overview}
+The model was trained for 50 epochs on 27000 images from the CelebA-HQ dataset. Figure \ref{fig:training_overview} shows the training overview.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{figures/phn_train.png}
+    \caption{Training overview showing the evolution of all metrics over 50 epochs.}
+    \label{fig:phn_train}
+\end{figure}
+The training dynamics over the first 25,000 steps illustrate a stable convergence trajectory characteristic of effective adversarial learning. The generator loss (\texttt{train/g\_loss}) exhibits a sharp initial descent before plateauing, a trend closely mirrored by the L1 reconstruction loss (\texttt{train/g\_l1}), indicating the model rapidly acquired low-frequency structural fidelity. Concurrently, the discriminator loss (\texttt{train/d\_loss}) maintains the expected oscillatory behavior without vanishing or diverging, signifying a sustained competitive equilibrium (minimax game) between the networks. The periodic spikes observed in the R1 loss reflect the application of lazy regularization, which effectively constrained the discriminator's gradients to prevent overfitting without destabilizing the overall training process.
+\newpage
+\subsubsection{Results on test set of FFHQ dataset}
+Table \ref{tab:ffhq_results_phn} presents the quantitative evaluation on the FFHQ test set, demonstrating the model's effectiveness in high-fidelity facial reconstruction. The method achieves a strong Structural Similarity Index (SSIM) of $0.9008$, indicating excellent preservation of the original facial structure and geometry. While the PSNR of $24.33$ dB reflects accurate pixel-level reconstruction, the Fréchet Inception Distance (FID) of $13.24$ is particularly notable, suggesting that the generated features are perceptually realistic and consistent with the real data distribution. Furthermore, the low VGG Perceptual Loss ($0.0656$) corroborates that the model successfully synthesizes semantically plausible textures in the masked regions rather than producing blurry approximations.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Quantitative Results on FFHQ Test Set (3,000 images)}
+    \label{tab:ffhq_results_phn}
+    \begin{tabular}{lc}
+        \toprule
+        \textbf{Metric} & \textbf{Value} \\
+        \midrule
+        PSNR (masked region) & 22.1238 dB \\
+        PSNR (full image) & 24.3336  dB \\
+        SSIM (full image) & 0.9008 \\
+        VGG Perceptual Loss & 0.0656 \\
+        MSE (masked region) & 0.0139 \\
+        MSE (unmasked region) & 0.0040 \\
+        FID Score & 13.2437 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsubsection{Visual Results}
+Figure \ref{fig:phn_results1} presents sample reconstruction results on the FFHQ test set, demonstrating the model's practical performance on diverse face images.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{figures/phn_sample_1.png}
+    \caption{Sample reconstruction results on FFHQ test set.}
+    \label{fig:phn_results1}
+\end{figure}
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{figures/phn_sample_2.png}
+    \caption{Sample reconstruction results on FFHQ test set.}
+    \label{fig:phn_results2}
+\end{figure}
+
+
+\vspace*{1.2cm}
+\section{Diffusion Model}
+\subsection{Diffusion Models}
+
+Diffusion models are a class of generative models that learn to synthesize data by reversing a gradual noising process. Inspired by non-equilibrium thermodynamics, these models define a forward diffusion process that progressively corrupts data by adding Gaussian noise, and a corresponding reverse process that learns to remove this noise step by step in order to recover samples from the original data distribution.
+
+\subsubsection{Forward Diffusion Process}
+
+Let $x_0 \sim q(x_0)$ denote a data sample drawn from the true data distribution. The forward diffusion process gradually adds noise over $T$ timesteps, producing a sequence of latent variables $\{x_t\}_{t=1}^{T}$. This process is defined as a Markov chain:
+\begin{equation}
+q(x_t \mid x_{t-1}) =
+\mathcal{N}\left(
+x_t;
+\sqrt{1 - \beta_t}\, x_{t-1},
+\beta_t I
+\right),
+\end{equation}
+where $\beta_t \in (0,1)$ is a predefined variance schedule controlling the amount of noise added at timestep $t$. As $t$ increases, the signal-to-noise ratio decreases, and for sufficiently large $T$, the variable $x_T$ approaches an isotropic Gaussian distribution.
+
+A key property of this process is that $x_t$ can be expressed directly in terms of $x_0$:
+\begin{equation}
+x_t =
+\sqrt{\bar{\alpha}_t}\, x_0
++
+\sqrt{1 - \bar{\alpha}_t}\, \varepsilon,
+\quad
+\varepsilon \sim \mathcal{N}(0, I),
+\end{equation}
+where $\alpha_t = 1 - \beta_t$ and
+\begin{equation}
+\bar{\alpha}_t = \prod_{i=1}^{t} \alpha_i.
+\end{equation}
+This closed-form expression allows efficient sampling of noisy data at arbitrary timesteps during training.
+
+\subsubsection{Reverse Denoising Process}
+
+The generative task consists of learning the reverse process $p_\theta(x_{t-1} \mid x_t)$, which gradually removes noise from $x_t$ to recover a clean sample. Unlike the forward process, the reverse transitions are unknown and must be approximated by a neural network parameterized by $\theta$:
+\begin{equation}
+p_\theta(x_{t-1} \mid x_t) =
+\mathcal{N}\left(
+x_{t-1};
+\mu_\theta(x_t, t),
+\Sigma_\theta(x_t, t)
+\right).
+\end{equation}
+
+In practice, the model is trained to predict the noise component $\varepsilon$ added at timestep $t$, which simplifies optimization and leads to a stable training objective. By iteratively applying the learned denoising steps starting from pure noise $x_T \sim \mathcal{N}(0, I)$, the model generates new samples that follow the data distribution.
+
+\subsubsection{Key Characteristics of Diffusion Models}
+
+Diffusion models exhibit several desirable properties:
+\begin{itemize}
+    \item \textbf{Stable training}: the training objective is typically a simple mean squared error loss.
+    \item \textbf{High sample quality}: generated samples are sharp and diverse.
+    \item \textbf{Likelihood-based formulation}: diffusion models provide a principled probabilistic framework.
+    \item \textbf{Flexible conditioning}: the denoising process can be conditioned on additional inputs, making diffusion models suitable for tasks such as image inpainting, super-resolution, and image-to-image translation.
+\end{itemize}
+
+These properties make diffusion models a strong foundation for generative modeling, particularly in image synthesis tasks where both visual fidelity and structural consistency are critical.
+
+\subsection{Denoising Diffusion Probabilistic Models (DDPM)}
+
+Denoising Diffusion Probabilistic Models (DDPMs) formalize diffusion-based generation as a variational inference problem, where a neural network is trained to approximate the reverse diffusion process. Introduced by Ho et al.~\cite{ho2020ddpm}, DDPMs provide a simple and effective framework for learning complex data distributions through iterative denoising.
+
+\subsubsection{Model Objective}
+
+Given the forward diffusion process described in Section~1.1, the goal of DDPM is to learn a parameterized reverse process:
+\begin{equation}
+p_\theta(x_{0:T}) = p(x_T) \prod_{t=1}^{T} p_\theta(x_{t-1} \mid x_t),
+\end{equation}
+where the prior is defined as $p(x_T) = \mathcal{N}(0, I)$. Each reverse transition is modeled as a Gaussian distribution:
+\begin{equation}
+p_\theta(x_{t-1} \mid x_t) =
+\mathcal{N}\left(x_{t-1}; \mu_\theta(x_t, t), \sigma_t^2 I \right).
+\end{equation}
+
+Rather than directly predicting the mean $\mu_\theta$, DDPMs are commonly trained to predict the noise component $\varepsilon$ added during the forward process. Using the closed-form expression of the forward diffusion, the mean can be recovered as:
+\begin{equation}
+\mu_\theta(x_t, t) =
+\frac{1}{\sqrt{\alpha_t}}
+\left(
+x_t - \frac{\beta_t}{\sqrt{1 - \bar{\alpha}_t}}
+\varepsilon_\theta(x_t, t)
+\right),
+\end{equation}
+where $\alpha_t = 1 - \beta_t$ and $\bar{\alpha}_t = \prod_{i=1}^{t} \alpha_i$.
+
+\subsubsection{Training Procedure}
+
+Training a DDPM follows a simple stochastic process:
+\begin{enumerate}
+    \item Sample a clean data point $x_0$ from the training dataset.
+    \item Sample a timestep $t \sim \text{Uniform}(1, T)$.
+    \item Sample noise $\varepsilon \sim \mathcal{N}(0, I)$.
+    \item Generate a noisy sample:
+    \begin{equation}
+        x_t = \sqrt{\bar{\alpha}_t} x_0 + \sqrt{1 - \bar{\alpha}_t} \varepsilon.
+    \end{equation}
+    \item Train a neural network $\varepsilon_\theta$ to predict $\varepsilon$ from $(x_t, t)$.
+\end{enumerate}
+
+The resulting training objective is a mean squared error loss:
+\begin{equation}
+\mathcal{L}_{\text{DDPM}} =
+\mathbb{E}_{x_0, t, \varepsilon}
+\left[
+\left\|
+\varepsilon - \varepsilon_\theta(x_t, t)
+\right\|_2^2
+\right].
+\end{equation}
+
+Despite its simplicity, this objective can be shown to correspond to optimizing a variational lower bound on the data likelihood.
+
+\subsubsection{Sampling Process}
+
+At inference time, sample generation starts from Gaussian noise $x_T \sim \mathcal{N}(0, I)$ and proceeds by iteratively applying the learned reverse transitions:
+\begin{equation}
+x_{t-1} \sim p_\theta(x_{t-1} \mid x_t),
+\quad t = T, \dots, 1.
+\end{equation}
+
+Each denoising step removes a small amount of noise, gradually transforming the sample into a coherent data instance. However, this sequential procedure requires executing all $T$ timesteps, resulting in slow inference.
+
+\subsubsection{Noise Schedules}
+
+The noise variance schedule $\{\beta_t\}_{t=1}^{T}$ plays a critical role in training stability and sample quality. Commonly used schedules include linear and cosine schedules, which control the rate at which information is destroyed in the forward process and recovered during denoising.
+
+\subsubsection{Strengths and Limitations}
+
+DDPMs offer several advantages, including stable training, high-quality sample generation, and a principled probabilistic foundation. Nevertheless, their reliance on a large number of diffusion steps makes them computationally expensive, particularly for high-resolution image generation. These limitations motivate more efficient variants such as latent diffusion models, which are discussed in subsequent sections.
+
+\subsection{U-Net Architecture for Diffusion Models}
+
+The denoising function in DDPMs is parameterized by a U-Net architecture, which has become the de facto standard for diffusion-based image generation. The U-Net is well-suited for this task due to its ability to capture both global semantic information and fine-grained spatial details through a symmetric encoder--decoder structure with skip connections.
+
+\subsubsection{Overall Architecture}
+
+The U-Net consists of three main components:
+\begin{itemize}
+    \item A \textbf{downsampling path} (encoder) that progressively reduces spatial resolution while increasing feature dimensionality.
+    \item A \textbf{bottleneck} that captures high-level semantic information.
+    \item An \textbf{upsampling path} (decoder) that gradually restores spatial resolution.
+\end{itemize}
+
+Skip connections link corresponding layers in the encoder and decoder, allowing high-resolution features to bypass the bottleneck and improving gradient flow. This design enables the network to preserve spatial structure while performing complex transformations required for denoising.
+
+\subsubsection{Time Conditioning}
+
+A key distinction between diffusion U-Nets and conventional image-to-image U-Nets is the incorporation of timestep conditioning. Each denoising step corresponds to a timestep $t$, which is embedded into a continuous vector representation using a sinusoidal positional encoding:
+\begin{equation}
+\gamma(t) =
+\left[
+\sin(\omega_1 t), \cos(\omega_1 t), \dots,
+\sin(\omega_{d/2} t), \cos(\omega_{d/2} t)
+\right],
+\end{equation}
+where $\omega_i$ are predefined frequencies and $d$ is the embedding dimension.
+
+The resulting time embedding is passed through a multilayer perceptron (MLP) and injected into each residual block of the U-Net via feature-wise affine transformations. This allows the network to adapt its denoising behavior according to the noise level at each timestep.
+
+\subsubsection{Residual Blocks}
+
+Each stage of the U-Net is composed of residual blocks, which typically include:
+\begin{itemize}
+    \item Convolutional layers
+    \item Normalization (e.g., Group Normalization)
+    \item Nonlinear activation functions (e.g., SiLU)
+\end{itemize}
+
+Residual connections help stabilize training and enable deeper networks. Time embeddings are added to intermediate feature maps within these blocks, conditioning the computation on the diffusion timestep.
+
+\subsubsection{Self-Attention Mechanism}
+
+To capture long-range spatial dependencies, self-attention layers are often introduced at lower spatial resolutions. Given a feature map $F \in \mathbb{R}^{H \times W \times C}$, self-attention allows each spatial location to attend to all others, improving global coherence in generated images.
+
+In diffusion models, attention layers are typically inserted at intermediate or bottleneck resolutions, where the computational cost is manageable while still providing global context.
+
+\subsubsection{Output Prediction}
+
+The U-Net takes a noisy image $x_t$ and a timestep $t$ as input and outputs a tensor of the same spatial dimensions. Depending on the training formulation, the network may predict:
+\begin{itemize}
+    \item the added noise $\varepsilon$,
+    \item the clean image $x_0$, or
+    \item a velocity parameterization $v$.
+\end{itemize}
+
+In DDPMs, noise prediction is the most commonly used approach due to its simplicity and stable training behavior.
+
+\subsubsection{Suitability for Diffusion Models}
+
+The U-Net architecture is particularly effective for diffusion models due to:
+\begin{itemize}
+    \item its multi-scale feature representation,
+    \item explicit conditioning on diffusion timesteps,
+    \item preservation of spatial details through skip connections,
+    \item and its compatibility with attention mechanisms.
+\end{itemize}
+
+These properties make the U-Net a powerful and flexible backbone for modeling the complex denoising dynamics required in diffusion-based generative models.
+
+\subsection{Training Procedure}
+
+Training a diffusion model consists of learning a neural network that can accurately reverse the forward diffusion process by predicting the noise added at different timesteps. The training procedure is designed to be simple, stable, and scalable to large datasets.
+
+\subsubsection{Noise Schedule}
+
+The forward diffusion process is governed by a predefined noise variance schedule $\{\beta_t\}_{t=1}^{T}$, which controls the amount of noise added at each timestep. From $\beta_t$, the following quantities are defined:
+\begin{equation}
+\alpha_t = 1 - \beta_t, \quad
+\bar{\alpha}_t = \prod_{i=1}^{t} \alpha_i.
+\end{equation}
+
+The choice of noise schedule significantly impacts training stability and sample quality. Common schedules include:
+\begin{itemize}
+    \item \textbf{Linear schedule}, where $\beta_t$ increases linearly over timesteps.
+    \item \textbf{Cosine schedule}, which preserves more signal at early timesteps and improves perceptual quality.
+\end{itemize}
+
+In practice, cosine schedules are often preferred due to their smoother signal-to-noise decay.
+
+\subsubsection{Timestep Sampling}
+
+During training, a timestep $t$ is sampled uniformly from $\{1, \dots, T\}$ for each training example. This stochastic sampling ensures that the model learns to denoise inputs at all noise levels and prevents overfitting to specific timesteps.
+
+Given a clean image $x_0$, a noisy sample $x_t$ is generated using:
+\begin{equation}
+x_t = \sqrt{\bar{\alpha}_t} x_0 + \sqrt{1 - \bar{\alpha}_t} \varepsilon,
+\quad \varepsilon \sim \mathcal{N}(0, I).
+\end{equation}
+
+\subsubsection{Training Objective}
+
+The neural network $\varepsilon_\theta(x_t, t)$ is trained to predict the noise $\varepsilon$ added to the clean image. The loss function is defined as:
+\begin{equation}
+\mathcal{L}_{\text{DDPM}} =
+\mathbb{E}_{x_0, t, \varepsilon}
+\left[
+\left\|
+\varepsilon - \varepsilon_\theta(x_t, t)
+\right\|_2^2
+\right].
+\end{equation}
+
+This objective is equivalent to optimizing a variational lower bound on the data likelihood under certain assumptions, while remaining computationally efficient and numerically stable.
+
+\subsubsection{Optimization Details}
+
+Diffusion models are typically trained using the Adam or AdamW optimizer with a fixed learning rate. Large batch sizes are often beneficial due to the noise-injection nature of the training process. Additional techniques commonly employed include:
+\begin{itemize}
+    \item Mixed-precision training to reduce memory usage and accelerate computation.
+    \item Gradient clipping to prevent instability at early training stages.
+\end{itemize}
+
+\subsubsection{Training Characteristics}
+
+One notable property of diffusion model training is that it does not require adversarial objectives or complex regularization strategies. Each training step is independent and relies on simple reconstruction loss, resulting in:
+\begin{itemize}
+    \item stable convergence,
+    \item predictable training dynamics,
+    \item and robustness to hyperparameter choices.
+\end{itemize}
+
+However, training diffusion models is computationally expensive due to the large number of timesteps and the high dimensionality of image data, particularly when operating directly in pixel space. These challenges motivate more efficient diffusion formulations, such as latent diffusion models, which are discussed in later sections.
+
+\subsection{Diffusion Models for Image Inpainting via RePaint}
+
+Image inpainting aims to reconstruct missing or corrupted regions of an image in a visually plausible and semantically consistent manner, given the surrounding known context. While diffusion models are naturally suited for generative tasks, applying pixel-based Denoising Diffusion Probabilistic Models (DDPMs) to inpainting requires specialized sampling strategies. RePaint is a diffusion-based inpainting method that enables pixel-space DDPMs to perform inpainting without retraining, by modifying the reverse diffusion process through constrained resampling.
+
+\subsubsection{Problem Formulation}
+
+Let $x_0 \in \mathbb{R}^{H \times W \times C}$ denote a clean image, and let $m \in \{0,1\}^{H \times W}$ be a binary mask, where $m_{ij} = 1$ indicates a known pixel and $m_{ij} = 0$ indicates a missing pixel. The observed image is defined as:
+\begin{equation}
+x_{\text{obs}} = m \odot x_0.
+\end{equation}
+
+The goal of inpainting is to generate a completed image $\hat{x}_0$ that preserves the known regions exactly while plausibly reconstructing the missing regions.
+
+\subsubsection{Key Idea of RePaint}
+
+RePaint adapts pretrained pixel-based DDPMs for image inpainting by enforcing consistency with known pixels during the reverse diffusion process. Instead of conditioning the model via additional inputs or retraining, RePaint modifies the sampling procedure to repeatedly reintroduce the observed pixels at each timestep.
+
+The core idea is to alternate between:
+\begin{itemize}
+    \item denoising using the pretrained diffusion model, and
+    \item resampling known regions according to the forward diffusion process.
+\end{itemize}
+
+This strategy allows information from the known regions to gradually propagate into the unknown regions over multiple denoising steps.
+
+\subsubsection{Forward Noising of Known Regions}
+
+At timestep $t$, the observed pixels are noised according to the same forward diffusion process used during training:
+\begin{equation}
+x_t^{\text{known}} =
+\sqrt{\bar{\alpha}_t} \, x_{\text{obs}}
++
+\sqrt{1 - \bar{\alpha}_t} \, \varepsilon,
+\quad \varepsilon \sim \mathcal{N}(0, I).
+\end{equation}
+
+This ensures that the known regions are statistically consistent with the diffusion timestep during sampling.
+
+\subsubsection{RePaint Sampling with Resampling}
+
+Given a sample $x_t$ at timestep $t$, the reverse diffusion step produces a preliminary denoised sample $\hat{x}_{t-1}$. RePaint then enforces consistency with the observed pixels by combining the denoised result with the noised known regions:
+\begin{equation}
+x_{t-1} =
+(1 - m) \odot \hat{x}_{t-1}
++
+m \odot x_{t-1}^{\text{known}}.
+\end{equation}
+
+To improve information flow from known to unknown regions, RePaint introduces a \emph{resampling strategy}, where multiple forward and reverse steps are performed at selected timesteps. This allows the model to repeatedly reconsider the boundary between known and missing regions, leading to more coherent inpainting results.
+
+\subsubsection{Advantages of RePaint-based Inpainting}
+
+RePaint offers several advantages for pixel-based diffusion inpainting:
+\begin{itemize}
+    \item \textbf{No retraining required}: pretrained DDPMs can be directly applied to inpainting tasks.
+    \item \textbf{Exact preservation}: known pixels are preserved throughout the sampling process.
+    \item \textbf{Improved boundary consistency}: resampling allows information to propagate smoothly across mask boundaries.
+    \item \textbf{Flexible masks}: arbitrary mask shapes and sizes can be handled naturally.
+\end{itemize}
+
+\subsubsection{Limitations of Pixel-based RePaint}
+
+Despite its effectiveness, RePaint inherits the computational drawbacks of pixel-based DDPMs:
+\begin{itemize}
+    \item the iterative resampling process increases inference time,
+    \item high memory consumption limits scalability to high-resolution images,
+    \item semantic consistency may degrade for very large missing regions.
+\end{itemize}
+
+These limitations motivate the use of latent diffusion models, which perform diffusion-based inpainting in a compressed latent space while retaining the semantic benefits of diffusion modeling.
+
+\subsection{Latent Diffusion Models}
+
+Latent Diffusion Models (LDMs) are an extension of diffusion-based generative models designed to address the computational and memory inefficiencies of pixel-based DDPMs. Instead of performing the diffusion process directly in pixel space, LDMs operate in a lower-dimensional latent space obtained through a learned autoencoder. This approach enables efficient training and sampling while preserving the semantic structure of high-resolution images.
+
+\subsubsection{Motivation}
+
+As discussed in Section~3, pixel-space diffusion models scale poorly with image resolution due to their high computational cost and redundant modeling of low-level details. Latent diffusion models mitigate these issues by decoupling perceptual compression from generative modeling. High-frequency details are handled by the decoder of the autoencoder, while the diffusion model focuses on modeling high-level semantic information in latent space.
+
+\subsubsection{Overall Framework}
+
+The LDM framework consists of two main components:
+\begin{itemize}
+    \item A \textbf{first-stage autoencoder} that maps an image $x_0$ into a compact latent representation $z_0$.
+    \item A \textbf{diffusion model} trained to model the distribution of latent variables rather than raw pixels.
+\end{itemize}
+
+Formally, the encoding process is defined as:
+\begin{equation}
+z_0 = \mathcal{E}(x_0),
+\end{equation}
+where $\mathcal{E}$ denotes the encoder network. The decoder $\mathcal{D}$ reconstructs the image from the latent representation:
+\begin{equation}
+\hat{x}_0 = \mathcal{D}(z_0).
+\end{equation}
+
+The diffusion process is applied to $z_0$ instead of $x_0$, significantly reducing the dimensionality of the denoising task.
+
+\subsubsection{Diffusion in Latent Space}
+
+The forward diffusion process in latent space follows the same formulation as pixel-space diffusion:
+\begin{equation}
+z_t = \sqrt{\bar{\alpha}_t} z_0 + \sqrt{1 - \bar{\alpha}_t} \varepsilon,
+\quad \varepsilon \sim \mathcal{N}(0, I).
+\end{equation}
+
+A U-Net-based denoising network is trained to predict the noise component $\varepsilon$ from $(z_t, t)$:
+\begin{equation}
+\varepsilon_\theta = \varepsilon_\theta(z_t, t).
+\end{equation}
+
+Since the latent space has much lower spatial resolution than pixel space, both training and sampling become significantly more efficient.
+
+\subsubsection{Advantages of Latent Diffusion}
+
+Operating in latent space provides several advantages:
+\begin{itemize}
+    \item \textbf{Computational efficiency}: reduced spatial resolution leads to faster training and inference.
+    \item \textbf{Memory efficiency}: lower-dimensional feature maps reduce GPU memory usage.
+    \item \textbf{Semantic focus}: the diffusion model concentrates on high-level structure rather than pixel-level noise.
+    \item \textbf{Scalability}: high-resolution image generation becomes feasible without prohibitive cost.
+\end{itemize}
+
+These advantages make latent diffusion models particularly suitable for tasks such as image inpainting, where semantic consistency and computational efficiency are critical.
+
+\subsubsection{Relation to Pixel-based Diffusion}
+
+Latent diffusion models preserve the probabilistic formulation and training objective of DDPMs while shifting the denoising process to a compressed representation. As a result, many architectural and algorithmic components, such as U-Net backbones, noise schedules, and sampling procedures, remain unchanged. The key difference lies in the domain in which diffusion is performed.
+
+The following subsection introduces the first-stage autoencoder, commonly implemented as a VQ-VAE, which plays a crucial role in defining the latent space used by latent diffusion models.
+
+\subsection{Vector-Quantized Variational Autoencoder (VQ-VAE)}
+
+In latent diffusion models, the latent space is constructed using a first-stage autoencoder that compresses images into a compact representation while preserving perceptually important information. A commonly used architecture for this purpose is the Vector-Quantized Variational Autoencoder (VQ-VAE), which enables efficient and stable learning of discrete latent representations.
+
+\subsubsection{Encoder and Decoder Architecture}
+
+Given an input image $x_0 \in \mathbb{R}^{H \times W \times C}$, the encoder $\mathcal{E}$ maps the image to a continuous latent representation:
+\begin{equation}
+z_e = \mathcal{E}(x_0), \quad z_e \in \mathbb{R}^{h \times w \times d},
+\end{equation}
+where $h \ll H$ and $w \ll W$ denote reduced spatial dimensions.
+
+The decoder $\mathcal{D}$ reconstructs the image from the quantized latent representation:
+\begin{equation}
+\hat{x}_0 = \mathcal{D}(z_q).
+\end{equation}
+
+The encoder and decoder are typically convolutional neural networks trained to minimize reconstruction error.
+
+\subsubsection{Vector Quantization}
+
+To obtain discrete latent representations, each latent vector $z_e^{(i)}$ is quantized using a learned codebook:
+\begin{equation}
+\mathcal{C} = \{e_k \in \mathbb{R}^d \mid k = 1, \dots, K\}.
+\end{equation}
+
+The quantization step replaces each encoder output with the nearest codebook vector:
+\begin{equation}
+z_q^{(i)} = \arg\min_{e_k \in \mathcal{C}}
+\left\| z_e^{(i)} - e_k \right\|_2.
+\end{equation}
+
+This discretization encourages the latent space to represent meaningful semantic patterns while preventing posterior collapse.
+
+\subsubsection{Training Objective}
+
+The VQ-VAE is trained using a combination of reconstruction loss and codebook-related losses:
+\begin{equation}
+\mathcal{L}_{\text{VQ-VAE}} =
+\left\| x_0 - \hat{x}_0 \right\|_2^2
++ \left\| \text{sg}[z_e] - z_q \right\|_2^2
++ \beta \left\| z_e - \text{sg}[z_q] \right\|_2^2,
+\end{equation}
+where $\text{sg}[\cdot]$ denotes the stop-gradient operator and $\beta$ is a commitment weight that encourages the encoder outputs to stay close to the selected codebook vectors.
+
+\subsubsection{Role in Latent Diffusion Models}
+
+In latent diffusion models, the VQ-VAE is trained independently and then frozen. The diffusion model is applied to the quantized latent representations $z_q$, rather than raw pixels. This separation of responsibilities allows:
+\begin{itemize}
+    \item the VQ-VAE to handle perceptual compression and reconstruction,
+    \item the diffusion model to focus on learning high-level semantic distributions.
+\end{itemize}
+
+By operating on a compact latent space, the diffusion process becomes significantly more efficient while maintaining visual fidelity.
+
+\subsubsection{Benefits for Inpainting}
+
+For image inpainting tasks, VQ-VAE-based latent spaces provide additional advantages:
+\begin{itemize}
+    \item missing regions correspond to contiguous areas in latent space, simplifying generation,
+    \item semantic consistency is improved due to structured latent representations,
+    \item decoding naturally restores fine-grained textures in reconstructed images.
+\end{itemize}
+
+These properties make VQ-VAE a crucial component of latent diffusion models, enabling efficient and high-quality inpainting of high-resolution images.
+
+\subsection{How Latent Diffusion Improves Pixel-based DDPM}
+
+Latent Diffusion Models (LDMs) address the key limitations of pixel-based Denoising Diffusion Probabilistic Models (DDPMs) by performing the diffusion process in a compact latent space rather than directly in pixel space. This section summarizes the principal improvements offered by latent diffusion and explains why it is particularly effective for image inpainting tasks.
+
+\subsubsection{Reduced Computational Complexity}
+
+By operating in a latent space with significantly lower spatial resolution, latent diffusion models reduce the computational cost of both training and sampling. If the autoencoder compresses the input image by a factor of $f$ in each spatial dimension, the complexity of the diffusion process is reduced by approximately:
+\begin{equation}
+\mathcal{O}\left(\frac{1}{f^2}\right).
+\end{equation}
+
+As a result, LDMs enable efficient modeling of high-resolution images that would be prohibitively expensive for pixel-based DDPMs.
+
+\subsubsection{Improved Memory Efficiency}
+
+Latent representations require fewer feature maps and smaller intermediate activations within the U-Net architecture. This reduction in memory usage allows for:
+\begin{itemize}
+    \item larger batch sizes,
+    \item deeper or wider networks,
+    \item and the inclusion of attention mechanisms at multiple resolutions.
+\end{itemize}
+
+These improvements contribute to more expressive models without exceeding hardware constraints.
+
+\subsubsection{Enhanced Semantic Modeling}
+
+Pixel-based diffusion models allocate significant capacity to modeling low-level noise and texture details. In contrast, latent diffusion models operate on representations that encode higher-level semantic information. This shift enables the diffusion process to focus on global structure, object relationships, and semantic coherence.
+
+For inpainting tasks, this semantic focus results in more plausible completions, particularly when reconstructing large or complex missing regions.
+
+\subsubsection{Faster Sampling}
+
+Since the denoising network processes lower-dimensional latent tensors, each diffusion step is substantially faster. This speedup reduces the total inference time even when the number of diffusion steps remains unchanged. Combined with accelerated sampling methods such as DDIM, latent diffusion enables practical deployment of diffusion-based inpainting systems.
+
+\subsubsection{Improved Boundary Consistency in Inpainting}
+
+In pixel-based inpainting, sharp transitions often occur at mask boundaries due to inconsistencies in local texture modeling. Latent diffusion mitigates this issue by generating content at a semantic level, while the decoder reconstructs fine details in a coherent manner. This leads to smoother transitions between known and reconstructed regions.
+
+\subsubsection{Summary of Improvements}
+
+The advantages of latent diffusion over pixel-based DDPMs are summarized in Table~\ref{tab:ddpm_vs_ldm}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\hline
+\textbf{Aspect} & \textbf{Pixel DDPM} & \textbf{Latent Diffusion} \\
+\hline
+Operating space & Pixel space & Latent space \\
+Computational cost & High & Low \\
+Memory usage & High & Reduced \\
+Sampling speed & Slow & Faster \\
+Semantic consistency & Limited & Strong \\
+Scalability & Poor & Good \\
+Inpainting quality & Boundary artifacts & Smooth transitions \\
+\hline
+\end{tabular}
+\caption{Comparison between pixel-based DDPM and latent diffusion models.}
+\label{tab:ddpm_vs_ldm}
+\end{table}
+
+\subsubsection{Discussion}
+
+By shifting the diffusion process into a compressed latent representation, latent diffusion models preserve the strengths of DDPMs while overcoming their primary inefficiencies. This design makes LDMs particularly well-suited for high-resolution image inpainting, where both semantic coherence and computational efficiency are essential.
+
+In the following sections, we evaluate the performance of latent diffusion-based inpainting through experimental results and quantitative metrics.
+
+\subsection{Implementation Details}
+
+This section describes the practical implementation of the proposed latent diffusion-based image inpainting system. We detail the dataset and preprocessing pipeline, latent representation, diffusion model architecture, training configuration, and inference procedure.
+
+\subsubsection{Dataset and Preprocessing}
+
+The model is trained on a dataset of natural images resized to a fixed resolution of $256 \times 256$. All images are normalized to the range $[-1, 1]$ prior to encoding. During training, binary masks are generated to simulate missing regions. The mask generation process includes:
+\begin{itemize}
+    \item random rectangular masks,
+    \item irregular free-form masks,
+    \item varying mask sizes and spatial coverage.
+\end{itemize}
+
+This diversity of mask patterns encourages the model to generalize across a wide range of inpainting scenarios.
+
+\subsubsection{Latent Representation}
+
+Images are encoded into a latent space using a pretrained and frozen VQ-VAE with a downsampling factor of $8$. Given an input image $x \in \mathbb{R}^{256 \times 256 \times 3}$, the encoder $\mathcal{E}$ produces a latent representation:
+\begin{equation}
+z = \mathcal{E}(x), \quad z \in \mathbb{R}^{64 \times 64 \times 3}.
+\end{equation}
+
+The diffusion process operates exclusively in this latent space, significantly reducing computational cost while preserving high-level semantic information. The VQ-VAE decoder is used only at inference time to reconstruct the final image.
+
+\subsubsection{Diffusion Model Architecture}
+
+The denoising network is implemented as a U-Net architecture composed of residual blocks and self-attention layers. The network follows a multi-resolution design with channel multipliers $(1, 2, 3, 4)$ and two residual blocks per resolution level. Self-attention is applied at latent resolutions of $16 \times 16$ and $8 \times 8$.
+
+Time-step information is embedded using sinusoidal embeddings followed by a two-layer multilayer perceptron, and injected into each residual block via feature-wise affine transformations. The network predicts the noise component added to the latent representation at each diffusion timestep.
+
+For inpainting, the model is conditioned on both the masked latent and the binary mask. The input to the diffusion model at timestep $t$ is constructed as:
+\begin{equation}
+\tilde{z}_t = \text{concat}(z_t, z_{\text{masked}}, m),
+\end{equation}
+where $z_t$ is the noisy latent, $z_{\text{masked}} = \mathcal{E}(x_{\text{obs}})$ is the encoded masked image, and $m$ is the binary mask.
+
+The denoising network follows a U-Net architecture composed of residual blocks and self-attention layers at selected resolutions. Group Normalization is applied throughout the network to ensure stable training under moderate batch sizes. All nonlinear activations use the SiLU function.
+
+Time-step conditioning is implemented using sinusoidal positional embeddings. Given a diffusion timestep $t$, a fixed sinusoidal embedding is computed and projected through a two-layer multilayer perceptron before being injected into each residual block via feature-wise affine transformations. This allows the network to adapt its denoising behavior across different noise levels.
+
+To improve optimization stability, the final convolutional layer of the U-Net is initialized to zero. This design choice ensures that the model initially predicts zero noise, gradually learning meaningful denoising functions during training.
+\subsubsection{Training Configuration}
+
+The diffusion model is trained using the AdamW optimizer with a learning rate of $1.4 \times 10^{-4}$ and a weight decay of $0.01$. A cosine learning rate schedule with linear warmup is employed to stabilize early training. Gradient clipping with a maximum norm of $1.0$ is applied to prevent exploding gradients.
+
+The noise schedule consists of $1000$ diffusion timesteps with a linear variance schedule. At each iteration, timesteps are sampled uniformly. The training objective is a masked noise prediction loss, with an increased weighting applied to the masked regions to emphasize accurate reconstruction of missing content.
+
+Mixed-precision training (AMP) is used to reduce memory consumption and accelerate training. Gradients are optionally accumulated to support larger effective batch sizes.
+
+The diffusion process is defined over $T = 1000$ timesteps. A linear noise schedule is used, where the variance parameters $\{\beta_t\}$ are constructed by linearly interpolating between $\sqrt{\beta_{\text{start}}}$ and $\sqrt{\beta_{\text{end}}}$ and then squaring the result. This formulation provides a smoother increase in noise across timesteps and improves numerical stability.
+
+The model is trained to predict the additive Gaussian noise using a masked mean squared error objective, with increased weighting applied to masked regions to emphasize accurate reconstruction of missing content. Timesteps are sampled uniformly during training.
+
+Optimization is performed using the AdamW optimizer with cosine learning rate decay and linear warmup. Gradient clipping is applied to prevent exploding gradients. Mixed-precision training (AMP) is employed to reduce memory usage and accelerate training.
+
+\subsubsection{Inference Procedure}
+
+At inference time, sampling begins from Gaussian noise in latent space. The reverse diffusion process is applied iteratively for a reduced number of steps to accelerate generation. At each timestep, known regions are constrained using the binary mask to ensure consistency with the observed pixels.
+
+After completing the reverse diffusion process, the final latent representation is decoded using the VQ-VAE decoder to produce the inpainted image in pixel space. Deterministic sampling methods such as DDIM are optionally employed to further reduce inference time.
+
+At inference time, sampling is performed in latent space starting from Gaussian noise. To reduce sampling time, Denoising Diffusion Implicit Models (DDIM) are employed. A subset of diffusion timesteps is selected using uniform discretization, significantly reducing the number of denoising steps required.
+
+DDIM sampling parameters are computed from the cumulative noise schedule, with the stochasticity parameter $\eta$ controlling the amount of randomness in the reverse process. In the deterministic setting, $\eta = 0$, enabling fast and consistent sampling.
+
+During each reverse diffusion step, the known regions specified by the binary mask are enforced, ensuring that observed pixels remain unchanged throughout the sampling process. After completion, the final latent representation is decoded using the VQ-VAE decoder to produce the inpainted image.
+\subsubsection{Implementation Framework}
+
+The system is implemented using the PyTorch framework and trained on GPU hardware. The modular design of the implementation allows flexible modification of network architecture, diffusion schedules, and inpainting strategies. Training progress and metrics are logged using Weights \& Biases to facilitate monitoring and reproducibility.
+
+\subsection{Result}
+Here is the validation result test on 3000 image randomly sample from FFHQ dataset 
+\begin{table}[h]
+\centering
+\caption{LDM validation result}
+\label{tab:validation_results}
+\begin{tabular}{l c}
+\hline
+\textbf{Metric} & \textbf{Value} \\
+\hline
+PSNR (masked region)      & 15.04 dB \\
+PSNR (full image)        & 20.68 dB \\
+SSIM (full image)        & 0.7837 \\
+VGG Perceptual Loss      & 8.19 \\
+MSE (masked region)      & 0.1260 \\
+MSE (unmasked region)    & 0.00518 \\
+FID Score                & 7.31 \\
+\hline
+\end{tabular}
+\end{table}
+
+Visualization:
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[width=0.7\textwidth]{"ffhq.png"}
+    \caption{Validate on FFHQ dataset.}
+    \label{fig:my_label}
+\end{figure}
+
+
+
+\vspace*{1.2cm}
+\section{Conclusion}
+
+\subsection{Cross-Dataset Validation Summary}
+
+To evaluate the generalization capability of each approach, all five models trained on CelebA-HQ 256 were validated on the FFHQ dataset (3,000 images). Table~\ref{tab:cross_validation_summary} presents a comprehensive comparison of the validation metrics across all approaches.
+
+\begin{table}[htbp]
+\centering
+\caption{Cross-Dataset Validation Results on FFHQ (3,000 images)}
+\label{tab:cross_validation_summary}
+\small
+\begin{tabular}{|l|c|c|c|c|c|}
+\hline
+\textbf{Metric} & \textbf{DoubleConv} & \textbf{PConv} & \textbf{Multi-Priors} & \textbf{GANsformer} & \textbf{Diffusion} \\ \hline
+PSNR (masked) $\uparrow$ & 22.01 & 20.80 & \textbf{28.87} & 22.12 & 15.04 \\
+PSNR (full) $\uparrow$ & 29.02 & 27.10 & \textbf{35.13} & 24.33 & 20.68 \\
+SSIM $\uparrow$ & 0.9299 & 0.9200 & \textbf{0.9712} & 0.9008 & 0.7837 \\
+FID $\downarrow$ & \textbf{5.56} & 9.70 & 12.67 & 13.24 & 7.31 \\ \hline
+\end{tabular}
+\end{table}
+
+\textit{Note: $\uparrow$ indicates higher is better; $\downarrow$ indicates lower is better. Best values are highlighted in bold.}
+
+\subsection{Analysis and Discussion}
+
+\subsubsection{Structural Fidelity Analysis}
+
+The \textbf{Multi-Priors Based Lightweight GAN} achieved the highest structural fidelity scores across all pixel-level metrics, with PSNR (masked region) of 28.87 dB and SSIM of 0.9712. This superior performance can be attributed to the explicit anatomical guidance provided by the landmark heatmaps, edge maps, and segmentation channels. By conditioning the generator on facial structural priors, the model maintains geometric consistency and produces reconstructions that closely align with the ground truth facial anatomy. The high PSNR on the full image (35.13 dB) further confirms that the lightweight architecture with separable convolutions does not compromise reconstruction quality.
+
+\subsubsection{Perceptual Realism Analysis}
+
+In contrast, the \textbf{Double Convolutional Block GAN} achieved the best FID score of 5.56, indicating that its generated images have a distribution most similar to real facial images. The deep double convolution blocks, combined with the PatchGAN discriminator, excel at synthesizing natural skin textures and fine-grained details that contribute to perceptual realism. This suggests a fundamental trade-off: structural guidance (Multi-Priors) optimizes for geometric accuracy, while deeper convolutional architectures (DoubleConv) optimize for texture fidelity.
+
+\subsubsection{Partial Convolution Performance}
+
+The \textbf{Partial Convolution GAN} demonstrated balanced performance with PSNR of 20.80 dB and SSIM of 0.92. The mask-aware convolution mechanism successfully prevents information bleeding from masked regions, resulting in sharp boundaries between reconstructed and original areas. However, the lack of explicit structural guidance limits its ability to infer complex facial geometry, placing it between the DoubleConv and Multi-Priors approaches in terms of overall quality.
+
+\subsubsection{Transformer-Based Approach}
+
+The \textbf{GANsformer} showed moderate performance with SSIM of 0.9008 and FID of 13.24. While the transformer's self-attention mechanism enables modeling of long-range dependencies, the relatively lower scores suggest that the architecture may require more training data or longer training time to fully leverage its capacity. Nevertheless, qualitative analysis reveals that GANsformer produces more coherent reconstructions where the lower face features remain consistent with upper face expressions.
+
+\subsubsection{Diffusion Model Observations}
+
+The \textbf{Diffusion Model} exhibited the lowest PSNR (15.04 dB) and SSIM (0.7837) among all approaches, yet achieved a competitive FID score of 7.31. This pattern is characteristic of diffusion models: the iterative denoising process generates diverse and photorealistic outputs that may not pixel-align with the ground truth but still maintain high perceptual quality. The lower structural metrics indicate that diffusion models prioritize generative diversity over deterministic reconstruction, making them more suitable for applications where visual plausibility matters more than exact pixel matching.
+
+\subsection{Key Findings}
+
+Based on the comprehensive evaluation, we summarize the following key findings:
+
+\begin{enumerate}
+    \item \textbf{Structural vs. Perceptual Trade-off}: Multi-Priors GAN excels in structural fidelity (SSIM 0.9712), while DoubleConv GAN leads in perceptual realism (FID 5.56). No single model dominates all metrics.
+    
+    \item \textbf{Anatomical Guidance Matters}: Explicit facial priors (landmarks, edges, segmentation) significantly improve geometric consistency in reconstructed faces.
+    
+    \item \textbf{Model Efficiency}: The Multi-Priors lightweight variant achieves top structural scores with $\sim$80\% fewer parameters, demonstrating that efficient architectures can compete with larger models.
+    
+    \item \textbf{Generative Paradigm Differences}: GAN-based methods provide deterministic, fast inference suitable for real-time applications; diffusion models offer diverse, high-quality outputs at the cost of slower inference and lower structural alignment.
+\end{enumerate}
+
+\subsection{Conclusion}
+
+Our comprehensive study on face reconstruction under mask occlusion reveals that the choice of generative approach should be guided by the target application requirements. For scenarios demanding high structural accuracy and identity preservation (e.g., surveillance, identity verification), the Multi-Priors Based Lightweight GAN is recommended. For applications prioritizing visual realism and natural texture synthesis (e.g., photo editing, content creation), the Double Convolutional Block GAN with PatchGAN discriminator offers superior results. The Diffusion Model provides an alternative when output diversity and photorealism are valued over exact reconstruction fidelity.
+
+\newpage
+
+\addcontentsline{toc}{section}{References}
+            
+\newpage
+
+\begin{thebibliography}{99}
+
+%% ============================================
+%% GENERAL GAN REFERENCES
+%% ============================================
+
+%Generator: U-Net Architecture
+\bibitem{unet2015}
+O. Ronneberger, P. Fischer, and T. Brox, 
+``U-Net: Convolutional Networks for Biomedical Image Segmentation,'' 
+in \textit{Proc. Medical Image Computing and Computer-Assisted Intervention (MICCAI)}, 
+Springer, 2015, pp. 234--241.
+\url{https://arxiv.org/abs/1505.04597}
+
+%Discriminator: PatchGAN (pix2pix)
+\bibitem{pix2pix2017}
+P. Isola, J.-Y. Zhu, T. Zhou, and A. A. Efros, 
+``Image-to-Image Translation with Conditional Adversarial Networks,'' 
+in \textit{Proc. IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, 
+2017, pp. 1125--1134.
+\url{https://arxiv.org/abs/1611.07004}
+
+%Original GAN
+\bibitem{goodfellow2014gan}
+I. J. Goodfellow, J. Pouget-Abadie, M. Mirza, B. Xu, D. Warde-Farley, S. Ozair, A. Courville, and Y. Bengio,
+``Generative Adversarial Nets,''
+in \textit{Advances in Neural Information Processing Systems (NeurIPS)},
+2014, pp. 2672--2680.
+\url{https://arxiv.org/abs/1406.2661}
+
+%% ============================================
+%% PARTIAL CONVOLUTION REFERENCES
+%% ============================================
+
+\bibitem{liu2018partialconv}
+G. Liu, F. A. Reda, K. J. Shih, T.-C. Wang, A. Tao, and B. Catanzaro,
+``Image Inpainting for Irregular Holes Using Partial Convolutions,''
+in \textit{Proc. European Conference on Computer Vision (ECCV)},
+Springer, 2018, pp. 85--100.
+\url{https://arxiv.org/abs/1804.07723}
+
+\bibitem{liu2018partialconv2}
+G. Liu, K. J. Shih, T.-C. Wang, F. A. Reda, K. Sapra, Z. Yu, A. Tao, and B. Catanzaro,
+``Partial Convolution based Padding,''
+arXiv preprint arXiv:1811.11718, Nov. 2018.
+\url{https://arxiv.org/abs/1811.11718}
+
+%% ============================================
+%% MULTI-PRIORS / FACIAL LANDMARKS REFERENCES
+%% ============================================
+
+\bibitem{king2009dlib}
+D. E. King,
+``Dlib-ml: A Machine Learning Toolkit,''
+\textit{Journal of Machine Learning Research},
+vol. 10, pp. 1755--1758, Jul. 2009.
+\url{https://www.jmlr.org/papers/v10/king09a.html}
+
+\bibitem{kazemi2014face}
+V. Kazemi and J. Sullivan,
+``One Millisecond Face Alignment with an Ensemble of Regression Trees,''
+in \textit{Proc. IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+2014, pp. 1867--1874.
+\url{https://www.cv-foundation.org/openaccess/content_cvpr_2014/papers/Kazemi_One_Millisecond_Face_2014_CVPR_paper.pdf}
+
+\bibitem{chollet2017xception}
+F. Chollet,
+``Xception: Deep Learning with Depthwise Separable Convolutions,''
+in \textit{Proc. IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+2017, pp. 1251--1258.
+\url{https://arxiv.org/abs/1610.02357}
+
+%% ============================================
+%% GANSFORMER / TRANSFORMER REFERENCES
+%% ============================================
+
+\bibitem{hudson2021gansformer}
+D. A. Hudson and C. L. Zitnick,
+``Generative Adversarial Transformers,''
+in \textit{Proc. International Conference on Machine Learning (ICML)},
+PMLR, 2021, pp. 4487--4499.
+\url{https://arxiv.org/abs/2103.01209}
+
+\bibitem{vaswani2017attention}
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin,
+``Attention Is All You Need,''
+in \textit{Advances in Neural Information Processing Systems (NeurIPS)},
+2017, pp. 5998--6008.
+\url{https://arxiv.org/abs/1706.03762}
+
+\bibitem{dosovitskiy2020vit}
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, J. Uszkoreit, and N. Houlsby,
+``An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale,''
+in \textit{Proc. International Conference on Learning Representations (ICLR)},
+2021.
+\url{https://arxiv.org/abs/2010.11929}
+
+%% ============================================
+%% DIFFUSION MODEL REFERENCES
+%% ============================================
+
+\bibitem{ho2020ddpm}
+J. Ho, A. Jain, and P. Abbeel,
+``Denoising Diffusion Probabilistic Models,''
+in \textit{Advances in Neural Information Processing Systems (NeurIPS)},
+2020, pp. 6840--6851.
+\url{https://arxiv.org/abs/2006.11239}
+
+\bibitem{rombach2022ldm}
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer,
+``High-Resolution Image Synthesis with Latent Diffusion Models,''
+in \textit{Proc. IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+2022, pp. 10684--10695.
+\url{https://arxiv.org/abs/2112.10752}
+
+\bibitem{song2020score}
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole,
+``Score-Based Generative Modeling through Stochastic Differential Equations,''
+in \textit{Proc. International Conference on Learning Representations (ICLR)},
+2021.
+\url{https://arxiv.org/abs/2011.13456}
+
+\bibitem{dhariwal2021diffusion}
+P. Dhariwal and A. Nichol,
+``Diffusion Models Beat GANs on Image Synthesis,''
+in \textit{Advances in Neural Information Processing Systems (NeurIPS)},
+2021, pp. 8780--8794.
+\url{https://arxiv.org/abs/2105.05233}
+
+%% ============================================
+%% IMAGE INPAINTING REFERENCES
+%% ============================================
+
+\bibitem{yu2018generative}
+J. Yu, Z. Lin, J. Yang, X. Shen, X. Lu, and T. S. Huang,
+``Generative Image Inpainting with Contextual Attention,''
+in \textit{Proc. IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+2018, pp. 5505--5514.
+\url{https://arxiv.org/abs/1801.07892}
+
+\bibitem{yu2019free}
+J. Yu, Z. Lin, J. Yang, X. Shen, X. Lu, and T. S. Huang,
+``Free-Form Image Inpainting with Gated Convolution,''
+in \textit{Proc. IEEE/CVF International Conference on Computer Vision (ICCV)},
+2019, pp. 4471--4480.
+\url{https://arxiv.org/abs/1806.03589}
+
+%% ============================================
+%% LOSS FUNCTIONS & METRICS
+%% ============================================
+
+\bibitem{simonyan2014very}
+K. Simonyan and A. Zisserman,
+``Very Deep Convolutional Networks for Large-Scale Image Recognition,''
+arXiv preprint arXiv:1409.1556, Sep. 2014.
+\url{https://arxiv.org/abs/1409.1556}
+
+\bibitem{johnson2016perceptual}
+J. Johnson, A. Alahi, and L. Fei-Fei,
+``Perceptual Losses for Real-Time Style Transfer and Super-Resolution,''
+in \textit{Proc. European Conference on Computer Vision (ECCV)},
+Springer, 2016, pp. 694--711.
+\url{https://arxiv.org/abs/1603.08155}
+
+%SSIM
+\bibitem{ssim2004}
+Z. Wang, A. C. Bovik, H. R. Sheikh, and E. P. Simoncelli, 
+``Image Quality Assessment: From Error Visibility to Structural Similarity,'' 
+\textit{IEEE Transactions on Image Processing}, 
+vol. 13, no. 4, pp. 600--612, Apr. 2004.
+
+%PSNR
+\bibitem{psnr2010}
+A. Hore and D. Ziou, 
+``Image Quality Metrics: PSNR vs. SSIM,'' 
+in \textit{Proc. 20th International Conference on Pattern Recognition (ICPR)}, 
+IEEE, 2010, pp. 2366--2369.
+
+%FID
+\bibitem{heusel2017fid}
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter,
+``GANs Trained by a Two Time-Scale Update Rule Converge to a Local Nash Equilibrium,''
+in \textit{Advances in Neural Information Processing Systems (NeurIPS)},
+2017, pp. 6626--6637.
+\url{https://arxiv.org/abs/1706.08500}
+
+%% ============================================
+%% TRAINING TECHNIQUES
+%% ============================================
+
+\bibitem{miyato2018spectral}
+T. Miyato, T. Kataoka, M. Koyama, and Y. Yoshida,
+``Spectral Normalization for Generative Adversarial Networks,''
+in \textit{Proc. International Conference on Learning Representations (ICLR)},
+2018.
+\url{https://arxiv.org/abs/1802.05957}
+
+%LR:ReduceLROnPlateau
+\bibitem{lrplateau2012}
+J. Senior, G. Heigold, M. Ranzato, and K. Yang, 
+``An Empirical Study of Learning Rates in Deep Neural Networks for Speech Recognition,'' 
+in \textit{Proc. IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)}, 
+2013, pp. 6724--6728.
+
+%% ============================================
+%% DATASET REFERENCES
+%% ============================================
+
+\bibitem{karras2018celeba}
+T. Karras, T. Aila, S. Laine, and J. Lehtinen,
+``Progressive Growing of GANs for Improved Quality, Stability, and Variation,''
+in \textit{Proc. International Conference on Learning Representations (ICLR)},
+2018.
+\url{https://arxiv.org/abs/1710.10196}
+
+\bibitem{karras2019ffhq}
+T. Karras, S. Laine, and T. Aila,
+``A Style-Based Generator Architecture for Generative Adversarial Networks,''
+in \textit{Proc. IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+2019, pp. 4401--4410.
+\url{https://arxiv.org/abs/1812.04948}
+
+%% ============================================
+%% FACE DETECTION
+%% ============================================
+
+\bibitem{opencvdnn2017}
+OpenCV Team, 
+``Face Detection using OpenCV DNN module with a pre-trained Caffe model,'' 
+OpenCV Documentation, 2017.
+\url{https://github.com/opencv/opencv/tree/master/samples/dnn/face_detector}
+
+\bibitem{ssd2016}
+W. Liu, D. Anguelov, D. Erhan, C. Szegedy, S. Reed, C.-Y. Fu, and A. C. Berg, 
+``SSD: Single Shot MultiBox Detector,'' 
+in \textit{Proc. European Conference on Computer Vision (ECCV)}, 
+Springer, 2016, pp. 21--37.
+\url{https://arxiv.org/abs/1512.02325}
+
+\end{thebibliography}
+
+\end{document}

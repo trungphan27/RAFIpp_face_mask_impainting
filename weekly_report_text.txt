@@ -1,0 +1,151 @@
+BÁO CÁO TIẾN ĐỘ ĐỊNH KỲ
+PROJECT II 
+(04/2026)
+Họ và tên: Phan Đình Trung
+MSSV: 20230093
+GVHD: PGS.TS. Huỳnh Quyết Thắng
+
+Kiến trúc gốc
+
+3
+Kiến trúc gốc
+1. Segmentation Network (Unet): Dự đoán vùng mask nhị phân của khẩu trang 
+→ Tạo vùng chú ý để impainting.
+2. Impainting Network: Mạng Generator chính để phục hồi vùng mặt sau khẩu 
+trang.
+      → Cơ chế Gated Convolution giúp mạng tập trung học các đặc trưng của 
+vùng bị che bởi khẩu trang một cách có chú ý hơn các vùng còn lại
+Face Mask Removal with Region-attentive Face Inpainting (4/2025)
+
+4
+Kiến trúc gốc
+3.
+M-CSAM (Multiscale Channel Spatial Attention Module):
+•
+Có 4 nhánh convolution với các dilation rate khác nhau (1,2,4,8), sau đó các feature 
+thu được ở multiscale khác nhau được gộp lại đưa qua CSAM. Feature với receptive 
+field nhỏ giúp phục hồi chi tiết nhỏ trên khuôn mặt, feature với receptive lớn giúp 
+phục hồi cấu trúc tổng thể → Học ngữ cảnh đa tỉ lệ.
+Face Mask Removal with Region-attentive Face Inpainting (4/2025)
+
+5
+Kiến trúc gốc
+3.
+M-CSAM (Multiscale Channel Spatial Attention Module):
+•
+Channel attention: chọn loại đặc trưng nào quan trọng, ví dụ texture da, biên môi, 
+vùng cằm và Spatial attention: chọn vị trí nào quan trọng, ví dụ vùng miệng, mũi dưới, 
+cằm.
+•
+3D convolution 3x3x3: học quan hệ giữa các đặc trưng khác nhau và quan hệ bên 
+trong từng feature map.
+•
+Residual connection: giảm vanishing gradient và cải thiện gradient flow.
+Face Mask Removal with Region-attentive Face Inpainting (4/2025)
+
+Một số thay 
+đổi đề xuất
+
+7
+Output của Segmentation UNet
+•
+Từ binary mask duy nhất sang bộ ba bản đồ ෡𝑀, ෠𝐵, መ𝐶:
+   +) ෡𝑀∶ soft mask, xác suất pixel thuộc vùng khẩu trang → giúp xác định vùng cần phục 
+hồi mềm hơn binary mask.
+    +) ෠𝐵 ∶ boundary map, xác suất pixel nằm gần biên khẩu trang → giúp Impainting 
+Network chú ý vùng ranh giới, nơi dễ xuất hiện seam, artifact hoặc lệch màu.
+    +) መ𝐶 ∶ confidence map, độ tin cậy của dự đoán segmentation vùng khẩu trang → giúp 
+mạng biết vùng nào nên tin tưởng segmentation, vùng nào cần xử lý cẩn thận hơn.
+
+8
+Input của Impainting Network
+•
+Kiến trúc gốc: Input của Impainting Network là gộp của ảnh đầu vào (RGB 3 kênh) và 
+mask nhị phân (1 kênh) với tổng là 4 kênh.
+•
+Impainting Network trong đề xuất này nhận ảnh đầu vào (RGB 3 kênh) và 3 map 
+෡𝑀, ෠𝐵, መ𝐶 là output của Segmentation Unet → 6 kênh 
+→Input của mạng Impainting giàu ngữ nghĩa hơn.
+→Nếu chỉ sử dụng binary mask như kiến trúc gốc: dễ gây seam tại biên vì vùng chuyển 
+từ ảnh thật sang ảnh sinh ra quá đột ngột. Với soft mask ෡𝑀, vùng biên có thể được 
+trộn mềm hơn.
+→Giảm lỗi ghép nối ảnh phục hồi ở biên khẩu trang, tạo chuyển tiếp giữa vùng phục hồi 
+và vùng thật một cách tự nhiên hơn
+IMPAINTING NETWORK
+
+9
+Hierarchical M-CSAM
+•
+Đề xuất thay đổi: feature của block M-CSAM trước sẽ được tính trọng số vào output của 
+block M-CSAM sau với tỉ lệ nhất định (𝛼1, 𝛼2, 𝛼3).
+→  Tái sử dụng feature ở các block trước tốt hơn, thông tin hữu ích từ các block M-CSAM 
+trước sẽ không mất đi.
+→Giữ được thông tin multi-scale ở nhiều mức refinement, giúp output cuối chứa cả thông tin 
+ngữ cảnh rộng và chi tiết cục bộ. 
+→Tạo quá trình học phân cấp từ thô đến tinh
+Block đầu có thể giữ nhiều thông tin cấu trúc tổng quát từ encoder; block sau tiếp tục 
+refine texture, chi tiết và quan hệ channel–spatial. Khi kết hợp feature từ nhiều block, mô 
+hình có thể tận dụng cả coarse structure và refined detail.
+→Cải thiện gradient flow
+ 
+
+10
+Skip-attention fusion
+•
+Vì encoder feature chứa cả thông tin 
+hữu ích và nhiễu từ vùng bị che, nên 
+cần skip connection có chọn lọc: Thay 
+vì truyền toàn bộ feature 𝐸𝑙 ,attention 
+gate chỉ giữ lại feature encoder hữu ích 
+cho decoder. 
+•
+Khai thác thêm thông tin ngữ nghĩa từ 
+3 output map của Segmentation Unet 
+→ Giúp mô hình chú ý hơn tại biên 
+mask, giảm seam và lệch màu khi ghép 
+vùng sinh với vùng thật, giảm phụ 
+thuộc vào các vùng segmentation 
+không chắc chắn
+Gốc:
+Đề xuất:
+GỐC
+ĐỀ XUẤT
+
+Data 
+Processing
+
+12
+Dataset
+• Dataset: CelebA-HQ-256: Bộ dataset public trên Kaggle với 
+30000 ảnh khuôn mặt người, được resize về 256x256.
+• Bộ dataset được công bố bởi nhóm nghiên cứu ở NVIDIA trong 
+paper: Progressive Growing of GANs for Improved Quality, 
+Stability, and Variation
+
+13
+Dataset
+Facial landmark
+extracting
+
+14
+References
+[1] O. Ronneberger, P. Fischer, and T. Brox, “U-Net: Convolutional Networks for Biomedical Image Segmentation,” in Proc. Medical 
+Image Computing and Computer-Assisted Intervention (MICCAI), 2015, pp. 234–241.
+[2] T. Takikawa, D. Acuna, V. Jampani, and S. Fidler, “Gated-SCNN: Gated Shape CNNs for Semantic Segmentation,” in Proc. 
+IEEE/CVF International Conference on Computer Vision (ICCV), 2019, pp. 5229–5238.
+[3] H. Kervadec, J. Bouchtiba, C. Desrosiers, E. Granger, J. Dolz, and I. Ben Ayed, “Boundary Loss for Highly Unbalanced 
+Segmentation,” in Proc. International Conference on Medical Imaging with Deep Learning (MIDL), 2019, pp. 285–296.
+[4] A. Kendall, Y. Gal, and R. Cipolla, “Multi-Task Learning Using Uncertainty to Weigh Losses for Scene Geometry and Semantics,” 
+in Proc. IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2018, pp. 7482–7491.
+[5] S. Woo, J. Park, J.-Y. Lee, and I. S. Kweon, “CBAM: Convolutional Block Attention Module,” in Proc. European Conference on 
+Computer Vision (ECCV), 2018, pp. 3–19.
+[6] O. Oktay, J. Schlemper, L. Le Folgoc, M. Lee, M. Heinrich, K. Misawa, K. Mori, S. McDonagh, N. Y. Hammerla, B. Kainz, B. 
+Glocker, and D. Rueckert, “Attention U-Net: Learning Where to Look for the Pancreas,” in Proc. Medical Imaging with Deep Learning 
+(MIDL), 2018.
+[7] L.-C. Chen, G. Papandreou, I. Kokkinos, K. Murphy, and A. L. Yuille, “DeepLab: Semantic Image Segmentation with Deep 
+Convolutional Nets, Atrous Convolution, and Fully Connected CRFs,” IEEE Transactions on Pattern Analysis and Machine Intelligence, 
+vol. 40, no. 4, pp. 834–848, 2018.
+[8] G. Huang, Z. Liu, L. van der Maaten, and K. Q. Weinberger, “Densely Connected Convolutional Networks,” in Proc. IEEE 
+Conference on Computer Vision and Pattern Recognition (CVPR), 2017, pp. 4700–4708.
+[9] J. Deng, J. Guo, N. Xue, and S. Zafeiriou, “ArcFace: Additive Angular Margin Loss for Deep Face Recognition,” in Proc. IEEE/CVF 
+Conference on Computer Vision and Pattern Recognition (CVPR), 2019, pp. 4690–4699.
