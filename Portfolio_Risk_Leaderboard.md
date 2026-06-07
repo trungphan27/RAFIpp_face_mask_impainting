@@ -26,16 +26,28 @@ sequenceDiagram
 
 # Portfolio, Risk, and Leaderboard Component - UML Class Diagram
 
-## Relationship Legend
+## UML Relationship Legend
+
+```mermaid
+classDiagram
+    direction LR
+
+    Association_Source --> Association_Target : Association
+    Child_Class --|> Parent_Class : Inheritance
+    Implementing_Class ..|> Interface_Class : Realization / Implementation
+    Dependent_Class ..> Service_Class : Dependency
+    Aggregate_Whole o-- Aggregate_Part : Aggregation
+    Composite_Whole *-- Composite_Part : Composition
+```
 
 | UML relationship | Mermaid syntax | Meaning |
 |---|---:|---|
 | Association | `A --> B` | A has a stable structural/use relationship with B. |
+| Inheritance | `Child --|> Parent` | Child extends Parent. |
+| Realization / Implementation | `Class ..|> Interface` | Class implements Interface. |
 | Dependency | `A ..> B` | A temporarily calls or depends on B's API. |
 | Aggregation | `A o-- B` | A groups B, but B can exist independently. |
 | Composition | `A *-- B` | A strongly owns B as part of its state/lifecycle. |
-| Inheritance | `Parent <|-- Child` | Child extends Parent. Not used in the current implementation. |
-| Realization / Implementation | `Interface <|.. Class` | Class implements Interface. Not used in the current implementation. |
 
 ## Class Diagram
 
@@ -43,195 +55,208 @@ sequenceDiagram
 classDiagram
     direction LR
 
-    class PortfolioPage {
-        <<React Page>>
-        +render()
-        +downloadCSV()
+    namespace React_Page {
+        class PortfolioPage {
+            <<React Page>>
+            +render()
+            +downloadCSV()
+        }
+
+        class LeaderboardPage {
+            <<React Page>>
+            +render()
+            +changePeriod(period)
+        }
     }
 
-    class LeaderboardPage {
-        <<React Page>>
-        +render()
-        +changePeriod(period)
+    namespace Zustand_Store {
+        class PortfolioStore {
+            <<Zustand Store>>
+            -cash
+            -initialCash
+            -holdings
+            -transactions
+            -portfolioHistory
+            -dailyPLHistory
+            +buy(ticker, quantity, price, orderType)
+            +sell(ticker, quantity, price, orderType)
+            +syncToSupabase(tx)
+            +loadFromSupabase()
+            +getPortfolioValue(prices)
+            +getUnrealizedPL(prices)
+            +getTotalRealizedPL()
+            +getTotalReturn(prices)
+            +getHoldingsArray(prices)
+            +getAllocation(prices)
+            +recordSnapshot(prices)
+            +submitToLeaderboard(prices)
+            +reset()
+        }
+
+        class LeaderboardStore {
+            <<Zustand Store>>
+            -entries
+            -period
+            -userRank
+            -loaded
+            +setPeriod(period)
+            +setEntries(entries)
+            +fetchFromSupabase()
+            +submitScore(portfolioValue, totalReturn, tradesCount)
+        }
+
+        class MarketStore {
+            <<Zustand Store>>
+            -prices
+            -prevPrices
+            -rawTicks
+            +getChange(ticker)
+            +getOHLCV(ticker, timeframe)
+            +updatePrices(data)
+            +simulateTick()
+        }
+
+        class AuthStore {
+            <<Zustand Store>>
+            -user
+            -session
+        }
     }
 
-    class PortfolioStore {
-        <<Zustand Store>>
-        -cash
-        -initialCash
-        -holdings
-        -transactions
-        -portfolioHistory
-        -dailyPLHistory
-        +buy(ticker, quantity, price, orderType)
-        +sell(ticker, quantity, price, orderType)
-        +syncToSupabase(tx)
-        +loadFromSupabase()
-        +getPortfolioValue(prices)
-        +getUnrealizedPL(prices)
-        +getTotalRealizedPL()
-        +getTotalReturn(prices)
-        +getHoldingsArray(prices)
-        +getAllocation(prices)
-        +recordSnapshot(prices)
-        +submitToLeaderboard(prices)
-        +reset()
+    namespace External_Client {
+        class SupabaseClient {
+            <<External Client>>
+            +auth.getUser()
+            +from(table)
+            +isSupabaseConfigured()
+        }
     }
 
-    class LeaderboardStore {
-        <<Zustand Store>>
-        -entries
-        -period
-        -userRank
-        -loaded
-        +setPeriod(period)
-        +setEntries(entries)
-        +fetchFromSupabase()
-        +submitScore(portfolioValue, totalReturn, tradesCount)
+    namespace Express_Router {
+        class PortfolioRoute {
+            <<Express Router>>
+            +GET /api/portfolio
+            +GET /api/portfolio/history
+            +GET /api/portfolio/risk
+        }
+
+        class LeaderboardRoute {
+            <<Express Router>>
+            +GET /api/leaderboard
+        }
     }
 
-    class MarketStore {
-        <<Zustand Store>>
-        -prices
-        -prevPrices
-        -rawTicks
-        +getChange(ticker)
-        +getOHLCV(ticker, timeframe)
-        +updatePrices(data)
-        +simulateTick()
+    namespace Service {
+        class RiskMetrics {
+            <<Service>>
+            +sharpeRatio(returns, riskFreeRate)
+            +maxDrawdown(values)
+            +volatility(returns, annualized)
+            +beta(portfolioReturns, marketReturns)
+            +winRate(trades)
+            +profitFactor(trades)
+        }
+
+        class SimulationEngine {
+            <<Service>>
+            -stocks
+            -prices
+            -rawTicks
+            -regime
+            +tick()
+            +start(intervalMs)
+            +stop()
+            +onTick(callback)
+            +setRegime(regime, params)
+            +applyShock(ticker, shockPercent)
+            +getQuote(ticker)
+        }
     }
 
-    class AuthStore {
-        <<Zustand Store>>
-        -user
-        -session
+    namespace Data_Model {
+        class Portfolio {
+            <<Data Model>>
+            +userId
+            +cash
+            +initialCash
+            +holdings
+            +updatedAt
+        }
+
+        class Holding {
+            <<Data Model>>
+            +ticker
+            +shares
+            +avgPrice
+            +realizedPL
+        }
+
+        class Transaction {
+            <<Data Model>>
+            +id
+            +type
+            +ticker
+            +orderType
+            +quantity
+            +price
+            +total
+            +time
+            +status
+        }
+
+        class LeaderboardEntry {
+            <<Data Model>>
+            +userId
+            +displayName
+            +portfolioValue
+            +totalReturn
+            +sharpeRatio
+            +tradesCount
+            +period
+            +updatedAt
+        }
+
+        class UserProfile {
+            <<Data Model>>
+            +id
+            +displayName
+            +watchlist
+        }
     }
 
-    class SupabaseClient {
-        <<External Client>>
-        +auth.getUser()
-        +from(table)
-        +isSupabaseConfigured()
-    }
+    PortfolioPage --> PortfolioStore : Association - reads state
+    PortfolioPage --> MarketStore : Association - reads prices
+    LeaderboardPage --> LeaderboardStore : Association - reads rankings
+    LeaderboardPage --> AuthStore : Association - checks user
 
-    class PortfolioRoute {
-        <<Express Router>>
-        +GET /api/portfolio
-        +GET /api/portfolio/history
-        +GET /api/portfolio/risk
-    }
+    PortfolioStore "1" *-- "1" Portfolio : Composition - owns state
+    Portfolio "1" *-- "0..*" Holding : Composition - contains
+    Portfolio "1" *-- "0..*" Transaction : Composition - contains
 
-    class LeaderboardRoute {
-        <<Express Router>>
-        +GET /api/leaderboard
-    }
+    PortfolioStore ..> MarketStore : Dependency - price input
+    PortfolioStore ..> SupabaseClient : Dependency - sync/load
+    PortfolioStore ..> LeaderboardStore : Dependency - submit score
 
-    class RiskMetrics {
-        <<Service>>
-        +sharpeRatio(returns, riskFreeRate)
-        +maxDrawdown(values)
-        +volatility(returns, annualized)
-        +beta(portfolioReturns, marketReturns)
-        +winRate(trades)
-        +profitFactor(trades)
-    }
+    LeaderboardStore "1" o-- "0..*" LeaderboardEntry : Aggregation - fetched entries
+    LeaderboardStore ..> SupabaseClient : Dependency - fetch/upsert
+    AuthStore ..> SupabaseClient : Dependency - auth session
 
-    class SimulationEngine {
-        <<Service>>
-        -stocks
-        -prices
-        -rawTicks
-        -regime
-        +tick()
-        +start(intervalMs)
-        +stop()
-        +onTick(callback)
-        +setRegime(regime, params)
-        +applyShock(ticker, shockPercent)
-        +getQuote(ticker)
-    }
+    SupabaseClient --> Portfolio : Association - portfolios
+    SupabaseClient --> Transaction : Association - transactions
+    SupabaseClient --> LeaderboardEntry : Association - leaderboard_entries
+    SupabaseClient --> UserProfile : Association - user_profiles
 
-    class Portfolio {
-        <<Data Model>>
-        +userId
-        +cash
-        +initialCash
-        +holdings
-        +updatedAt
-    }
+    LeaderboardEntry --> UserProfile : Association - user profile
 
-    class Holding {
-        <<Data Model>>
-        +ticker
-        +shares
-        +avgPrice
-        +realizedPL
-    }
-
-    class Transaction {
-        <<Data Model>>
-        +id
-        +type
-        +ticker
-        +orderType
-        +quantity
-        +price
-        +total
-        +time
-        +status
-    }
-
-    class LeaderboardEntry {
-        <<Data Model>>
-        +userId
-        +displayName
-        +portfolioValue
-        +totalReturn
-        +sharpeRatio
-        +tradesCount
-        +period
-        +updatedAt
-    }
-
-    class UserProfile {
-        <<Data Model>>
-        +id
-        +displayName
-        +watchlist
-    }
-
-    PortfolioPage --> PortfolioStore : association - reads portfolio state
-    PortfolioPage --> MarketStore : association - reads live prices
-    LeaderboardPage --> LeaderboardStore : association - reads ranking state
-    LeaderboardPage --> AuthStore : association - checks current user
-
-    PortfolioStore *-- Portfolio : composition - owns portfolio state
-    Portfolio *-- Holding : composition - contains holdings
-    Portfolio *-- Transaction : composition - contains transactions
-    PortfolioStore ..> MarketStore : dependency - calculates with prices
-    PortfolioStore ..> SupabaseClient : dependency - sync/load portfolio
-    PortfolioStore ..> LeaderboardStore : dependency - submits score
-
-    LeaderboardStore o-- LeaderboardEntry : aggregation - groups fetched entries
-    LeaderboardStore ..> SupabaseClient : dependency - fetch/upsert scores
-    AuthStore ..> SupabaseClient : dependency - auth session
-
-    SupabaseClient --> Portfolio : association - portfolios table
-    SupabaseClient --> Transaction : association - transactions table
-    SupabaseClient --> LeaderboardEntry : association - leaderboard_entries table
-    SupabaseClient --> UserProfile : association - user_profiles table
-
-    LeaderboardEntry --> UserProfile : association - belongs to user profile
-
-    PortfolioRoute o-- Portfolio : aggregation - reads in-memory portfolio
-    PortfolioRoute ..> SimulationEngine : dependency - current holding values
-    PortfolioRoute ..> RiskMetrics : dependency - risk calculations
-    LeaderboardRoute o-- LeaderboardEntry : aggregation - returns ranking rows
+    PortfolioRoute "1" o-- "1" Portfolio : Aggregation - in-memory state
+    PortfolioRoute ..> SimulationEngine : Dependency - current prices
+    PortfolioRoute ..> RiskMetrics : Dependency - risk metrics
+    LeaderboardRoute "1" o-- "0..*" LeaderboardEntry : Aggregation - ranking rows
 ```
 
 ## Notes
 
-- The current source code does not define inheritance or interface implementation for this component.
+- The current source code does not define inheritance or interface implementation relationships for this component, so those arrows are shown only in the legend.
 - `Composition` is used where the object is part of the owning state, such as `Portfolio` containing `Holding` and `Transaction`.
 - `Aggregation` is used where a class groups data that can exist independently, such as `LeaderboardStore` grouping `LeaderboardEntry`.
 - `Dependency` is used for API/service calls, such as `PortfolioStore` calling `SupabaseClient` or `RiskMetrics`.
